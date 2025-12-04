@@ -4,6 +4,7 @@ networkx
 pandas
 numpy
 plotly
+scipy
 # venv\Scripts\activate
 # pip install -r requirements.txt
-# python app.py
+# streamlit python app.py
