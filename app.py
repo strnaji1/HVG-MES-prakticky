@@ -5,6 +5,13 @@ import networkx as nx
 import plotly.express as px
 import plotly.graph_objects as go
 
+# Zkusíme importovat powerlaw – pokud není, jen nastavíme flag
+try:
+    import powerlaw
+    HAS_POWERLAW = True
+except ImportError:
+    HAS_POWERLAW = False
+
 # =========================
 #  Pomocné funkce – generátory
 # =========================
@@ -313,6 +320,128 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     G = build_hvg(arr)
 
     st.subheader("🕸️ Interaktivní vizualizace HVG")
+
+    # ====== Analytické statistiky HVG ======
+    n_nodes = G.number_of_nodes()
+    n_edges = G.number_of_edges()
+    degrees = [d for _, d in G.degree()]
+    avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
+
+    # Clustering
+    try:
+        C = nx.average_clustering(G)
+    except Exception:
+        C = float("nan")
+
+    # Souvislost, průměrná délka cesty, průměr
+    is_conn = nx.is_connected(G) if n_nodes > 0 else False
+    L = None
+    diam = None
+    if is_conn and n_nodes > 1:
+        try:
+            L = nx.average_shortest_path_length(G)
+        except Exception:
+            L = None
+        try:
+            diam = nx.diameter(G)
+        except Exception:
+            diam = None
+
+    # Assortativita stupňů
+    try:
+        assort = nx.degree_assortativity_coefficient(G)
+    except Exception:
+        assort = None
+
+    # Teoretické hodnoty pro náhodný graf G(N, p)
+    L_rand = None
+    C_rand = None
+    sigma_sw = None
+
+    if n_nodes > 1 and avg_deg > 1:
+        try:
+            L_rand = np.log(n_nodes) / np.log(avg_deg)
+            C_rand = avg_deg / n_nodes
+        except Exception:
+            L_rand = None
+            C_rand = None
+
+    # Small-world index σ = (C/C_rand) / (L/L_rand)
+    if (
+        L is not None and C is not None and
+        L_rand is not None and C_rand not in (None, 0)
+    ):
+        try:
+            sigma_sw = (C / C_rand) / (L / L_rand)
+        except Exception:
+            sigma_sw = None
+
+    col_stats1, col_stats2 = st.columns(2)
+    with col_stats1:
+        st.markdown("**Základní metriky HVG**")
+        st.write(f"- Počet vrcholů: **{n_nodes}**")
+        st.write(f"- Počet hran: **{n_edges}**")
+        st.write(f"- Průměrný stupeň: **{avg_deg:.3f}**")
+        if L is not None:
+            st.write(f"- Průměrná délka cesty L: **{L:.3f}**")
+        else:
+            st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*")
+        if diam is not None:
+            st.write(f"- Průměr grafu (diameter): **{diam}**")
+        else:
+            st.write("- Průměr grafu (diameter): *není k dispozici*")
+
+    with col_stats2:
+        st.markdown("**Clustering a small-world charakter**")
+        st.write(f"- Clustering coefficient C: **{C:.3f}**")
+        if assort is not None and not np.isnan(assort):
+            st.write(f"- Degree assortativity: **{assort:.3f}**")
+        else:
+            st.write("- Degree assortativity: *není k dispozici*")
+
+        if L_rand is not None and C_rand is not None and C_rand != 0:
+            st.write(
+                "- Náhodný graf (pro porovnání):  \n"
+                f"  - L_rand ≈ **{L_rand:.3f}**  \n"
+                f"  - C_rand ≈ **{C_rand:.5f}**"
+            )
+        else:
+            st.write("- Náhodný graf (L_rand, C_rand): *nelze odhadnout*")
+
+        if sigma_sw is not None:
+            st.write(
+                f"- Small-world index σ "
+                f"(σ>1: small-world, σ≈1: hraniční, σ<1: není small-world): "
+                f"**{sigma_sw:.2f}**"
+            )
+
+            # Slovní interpretace σ
+            if sigma_sw > 1.2:
+                st.success(
+                    "Interpretace: síť má **výrazné small-world vlastnosti** "
+                    "(σ > 1.2 – vyšší clustering než náhodný graf, podobná délka cest)."
+                )
+            elif 0.8 <= sigma_sw <= 1.2:
+                st.info(
+                    "Interpretace: síť je **na hraně small-world** "
+                    "(σ ≈ 1 – podobné vlastnosti jako náhodný graf)."
+                )
+            else:
+                st.warning(
+                    "Interpretace: síť **pravděpodobně není small-world** "
+                    "(σ < 0.8 – nevykazuje výraznou kombinaci vysokého clusteringu "
+                    "a krátkých cest vůči náhodnému grafu)."
+                )
+        else:
+            st.write(
+                "- Small-world index σ: *nelze spočítat "
+                "(chybí některá z metrik L, C, L_rand nebo C_rand)*"
+            )
+
+
+    st.markdown("---")
+
+    # ====== Rozmístění pro vizualizaci HVG ======
     pos = nx.spring_layout(G, seed=42)
 
     # Edges
@@ -353,7 +482,7 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     st.plotly_chart(fig_hvg, use_container_width=True)
 
     # Histogram stupňů
-    degs = [d for _, d in G.degree()]
+    degs = degrees
     df_deg = pd.DataFrame({"degree": degs})
     fig_hist = px.histogram(
         df_deg, x="degree", nbins=max(degs) + 1,
@@ -385,6 +514,55 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     )
     fig_power.update_traces(mode="markers+lines")
     st.plotly_chart(fig_power, use_container_width=True)
+
+    # Volitelný formální power-law test
+    do_pl_test = st.checkbox("🔍 Provést formální power-law test (Clauset–Shalizi–Newman)")
+
+    if do_pl_test:
+        if not HAS_POWERLAW:
+            st.warning(
+                "K provedení testu je potřeba balík `powerlaw`. "
+                "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
+            )
+        else:
+            # filtrujeme jen stupně >= 1
+            degs_for_fit = np.array([d for d in degs if d > 0])
+
+            if len(degs_for_fit) < 10:
+                st.info("Graf má příliš málo vrcholů pro smysluplný power-law fit.")
+            else:
+                try:
+                    fit = powerlaw.Fit(degs_for_fit, discrete=True, verbose=False)
+                    alpha = fit.power_law.alpha
+                    xmin = fit.power_law.xmin
+
+                    # porovnání power-law vs. exponenciální rozdělení
+                    R, p = fit.distribution_compare('power_law', 'exponential')
+
+                    st.markdown("**Výsledek power-law analýzy:**")
+                    st.write(f"- Odhadnutý exponent \\(\\alpha\\): **{alpha:.3f}**")
+                    st.write(f"- Odhadnuté \\(k_\\min\\): **{xmin}**")
+                    st.write(f"- Likelihood ratio (power-law vs. exponential): **R = {R:.3f}**")
+                    st.write(f"- p-hodnota: **p = {p:.3f}**")
+
+                    if p < 0.1:
+                        if R > 0:
+                            st.success(
+                                "Pro daný HVG jsou data **kompatibilní s power-law** "
+                                "(power-law je statisticky preferovaný oproti exponenciálnímu rozdělení)."
+                            )
+                        else:
+                            st.warning(
+                                "Power-law model je **horší** než exponenciální (R < 0, p < 0.1). "
+                                "Síť pravděpodobně není scale-free."
+                            )
+                    else:
+                        st.info(
+                            "Test je **neprůkazný** (p ≥ 0.1). Nelze spolehlivě říct, že rozdělení je power-law, "
+                            "ale ani ho jednoznačně vyloučit."
+                        )
+                except Exception as e:
+                    st.error(f"Nepodařilo se provést power-law fit: {e}")
 
     # Arc diagram HVG
     st.subheader("🎨 Arc diagram HVG")
