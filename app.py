@@ -110,6 +110,69 @@ def build_hvg(data):
 
 
 # =========================
+#  Small-world analyzer třída
+# =========================
+
+class SmallWorldAnalyzer:
+    """
+    Pomocná třída pro výpočet a interpretaci small-world indexu σ.
+    Teoretická hranice: σ > 1 => small-world.
+    """
+    def __init__(self, C, L, C_rand, L_rand):
+        self.C = C
+        self.L = L
+        self.C_rand = C_rand
+        self.L_rand = L_rand
+        self.sigma = self._compute_sigma()
+
+    def _compute_sigma(self):
+        if (
+            self.C is None or self.L is None or
+            self.C_rand in (None, 0) or
+            self.L_rand is None
+        ):
+            return None
+        try:
+            return (self.C / self.C_rand) / (self.L / self.L_rand)
+        except Exception:
+            return None
+
+    def interpretation(self, atol=0.05):
+        """
+        Vrátí (typ, zpráva) podle hodnoty σ:
+        - 'success'  -> small-world
+        - 'info'     -> podobné náhodnému grafu (σ ≈ 1)
+        - 'warning'  -> není small-world
+        """
+        if self.sigma is None or np.isnan(self.sigma):
+            return (
+                "info",
+                "Small-world index σ nelze spolehlivě spočítat "
+                "(chybí některá z metrik nebo došlo k numerické chybě)."
+            )
+
+        s = self.sigma
+        if s > 1 + atol:
+            return (
+                "success",
+                "Síť má **small-world vlastnosti** "
+                "(σ > 1 – vyšší clustering než náhodný graf při podobné délce cest)."
+            )
+        elif abs(s - 1.0) <= atol:
+            return (
+                "info",
+                "Síť je **velmi podobná náhodnému grafu** "
+                "(σ ≈ 1 – žádné výrazné small-world chování)."
+            )
+        else:
+            return (
+                "warning",
+                "Síť **pravděpodobně není small-world** "
+                "(σ < 1 – kombinace clusteringu a délky cest neodpovídá small-world síti)."
+            )
+
+
+# =========================
 #  Inicializace session state
 # =========================
 
@@ -356,7 +419,6 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     # Teoretické hodnoty pro náhodný graf G(N, p)
     L_rand = None
     C_rand = None
-    sigma_sw = None
 
     if n_nodes > 1 and avg_deg > 1:
         try:
@@ -366,15 +428,9 @@ if st.session_state.show_hvg and st.session_state.data is not None:
             L_rand = None
             C_rand = None
 
-    # Small-world index σ = (C/C_rand) / (L/L_rand)
-    if (
-        L is not None and C is not None and
-        L_rand is not None and C_rand not in (None, 0)
-    ):
-        try:
-            sigma_sw = (C / C_rand) / (L / L_rand)
-        except Exception:
-            sigma_sw = None
+    # Small-world analyzer – výpočet σ a interpretace
+    analyzer = SmallWorldAnalyzer(C, L, C_rand, L_rand)
+    sigma_sw = analyzer.sigma
 
     col_stats1, col_stats2 = st.columns(2)
     with col_stats1:
@@ -408,41 +464,49 @@ if st.session_state.show_hvg and st.session_state.data is not None:
         else:
             st.write("- Náhodný graf (L_rand, C_rand): *nelze odhadnout*")
 
-        if sigma_sw is not None:
+        if sigma_sw is not None and not np.isnan(sigma_sw):
             st.write(
                 f"- Small-world index σ "
-                f"(σ>1: small-world, σ≈1: hraniční, σ<1: není small-world): "
+                f"(σ > 1: small-world, σ ≈ 1: podobné náhodnému grafu, σ < 1: není small-world): "
                 f"**{sigma_sw:.2f}**"
             )
 
-            # Slovní interpretace σ
-            if sigma_sw > 1.2:
-                st.success(
-                    "Interpretace: síť má **výrazné small-world vlastnosti** "
-                    "(σ > 1.2 – vyšší clustering než náhodný graf, podobná délka cest)."
-                )
-            elif 0.8 <= sigma_sw <= 1.2:
-                st.info(
-                    "Interpretace: síť je **na hraně small-world** "
-                    "(σ ≈ 1 – podobné vlastnosti jako náhodný graf)."
-                )
+            level, msg = analyzer.interpretation(atol=0.05)
+            if level == "success":
+                st.success(msg)
+            elif level == "warning":
+                st.warning(msg)
             else:
-                st.warning(
-                    "Interpretace: síť **pravděpodobně není small-world** "
-                    "(σ < 0.8 – nevykazuje výraznou kombinaci vysokého clusteringu "
-                    "a krátkých cest vůči náhodnému grafu)."
-                )
+                st.info(msg)
         else:
             st.write(
                 "- Small-world index σ: *nelze spočítat "
-                "(chybí některá z metrik L, C, L_rand nebo C_rand)*"
+                "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
             )
-
 
     st.markdown("---")
 
     # ====== Rozmístění pro vizualizaci HVG ======
-    pos = nx.spring_layout(G, seed=42)
+    layout_option = st.radio(
+        "Rozložení HVG vrcholů",
+        ["Síťové (spring layout)", "Planární (pokud možné)"],
+        horizontal=True
+    )
+
+    if layout_option == "Síťové (spring layout)":
+        pos = nx.spring_layout(G, seed=42)
+    else:  # "Planární (pokud možné)"
+        try:
+            is_planar, embedding = nx.check_planarity(G)
+            if is_planar:
+                pos = nx.planar_layout(G)
+            else:
+                pos = nx.spring_layout(G, seed=42)
+        except Exception:
+            pos = nx.spring_layout(G, seed=42)
+
+    # Volba, jestli zobrazit textové popisky vrcholů
+    show_labels = st.checkbox("Zobrazit popisky vrcholů (indexy)", value=False)
 
     # Edges
     edge_x, edge_y = [], []
@@ -465,9 +529,19 @@ if st.session_state.show_hvg and st.session_state.data is not None:
         neigh = list(G.adj[node])
         node_text.append(f"Index: {node}<br>Stupeň: {len(neigh)}<br>Sousedé: {neigh}")
 
+    if show_labels:
+        node_mode = "markers+text"
+        node_text_visual = [str(n) for n in G.nodes()]
+        text_position = "bottom center"
+    else:
+        node_mode = "markers"
+        node_text_visual = None
+        text_position = None
+
     node_trace = go.Scatter(
-        x=node_x, y=node_y, mode='markers+text',
-        text=[str(n) for n in G.nodes()], textposition="bottom center",
+        x=node_x, y=node_y, mode=node_mode,
+        text=node_text_visual,
+        textposition=text_position,
         hoverinfo='text', hovertext=node_text,
         marker=dict(size=10, color='skyblue', line_width=1),
         textfont=dict(size=10, color="black")
@@ -515,8 +589,8 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     fig_power.update_traces(mode="markers+lines")
     st.plotly_chart(fig_power, use_container_width=True)
 
-    # Volitelný formální power-law test
-    do_pl_test = st.checkbox("🔍 Provést formální power-law test (Clauset–Shalizi–Newman)")
+    # Volitelný formální power-law test + CCDF graf
+    do_pl_test = st.checkbox("🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF")
 
     if do_pl_test:
         if not HAS_POWERLAW:
@@ -561,11 +635,76 @@ if st.session_state.show_hvg and st.session_state.data is not None:
                             "Test je **neprůkazný** (p ≥ 0.1). Nelze spolehlivě říct, že rozdělení je power-law, "
                             "ale ani ho jednoznačně vyloučit."
                         )
+
+                    # =========================
+                    #  CCDF power-law graf
+                    # =========================
+                    # Empirická CCDF: P(K >= k)
+                    degs_arr = degs_for_fit
+                    unique_sorted = np.sort(np.unique(degs_arr))
+                    ccdf_vals = np.array([
+                        np.sum(degs_arr >= k) / len(degs_arr) for k in unique_sorted
+                    ])
+
+                    # používáme jen tail k >= xmin
+                    mask = unique_sorted >= xmin
+                    if np.sum(mask) >= 2:
+                        k_emp = unique_sorted[mask]
+                        ccdf_emp = ccdf_vals[mask]
+
+                        # Teoretická power-law CCDF ~ (k/xmin)^{1-α}, znormalizovaná v k_min
+                        k_theory = np.linspace(xmin, k_emp.max(), 100)
+                        ccdf_theory = (k_theory / xmin) ** (1 - alpha)
+                        # přenormování tak, aby se kryla v k_min
+                        ccdf_theory *= ccdf_emp[0] / ccdf_theory[0]
+
+                        st.subheader("📈 CCDF power-law graf (log–log)")
+
+                        fig_ccdf = go.Figure()
+
+                        # Empirická CCDF
+                        fig_ccdf.add_trace(go.Scatter(
+                            x=k_emp,
+                            y=ccdf_emp,
+                            mode="markers",
+                            name="Empirická CCDF",
+                        ))
+
+                        # Teoretický power-law fit
+                        fig_ccdf.add_trace(go.Scatter(
+                            x=k_theory,
+                            y=ccdf_theory,
+                            mode="lines",
+                            name=f"Power-law fit (α={alpha:.2f})",
+                        ))
+
+                        fig_ccdf.update_layout(
+                            title="CCDF stupňového rozdělení (empirická vs. power-law fit)",
+                            xaxis_type="log",
+                            yaxis_type="log",
+                            xaxis_title="Stupeň k",
+                            yaxis_title="P(K ≥ k)",
+                            legend=dict(x=0.02, y=0.98),
+                            margin=dict(b=40, l=50, r=10, t=50),
+                        )
+
+                        st.plotly_chart(fig_ccdf, use_container_width=True)
+                        st.caption(
+                            "Body představují empirickou komplementární distribuční funkci stupňů pro k ≥ k_min, "
+                            "křivka je teoretický power-law fit. "
+                            "Pokud se body v tailu (vpravo) přibližně drží křivky, "
+                            "je chování rozdělení kompatibilní s power-law."
+                        )
+                    else:
+                        st.info(
+                            "Tail rozdělení (k ≥ k_min) je příliš krátký na smysluplný CCDF graf."
+                        )
+
                 except Exception as e:
                     st.error(f"Nepodařilo se provést power-law fit: {e}")
 
     # Arc diagram HVG
-    st.subheader("🎨 Arc diagram HVG")
+    st.subheader("🎨 Arc Diagram HVG")
     n = len(arr)
     node_x_line = np.arange(n)
     node_y_line = np.zeros(n)
