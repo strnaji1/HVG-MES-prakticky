@@ -110,6 +110,25 @@ def build_hvg(data):
 
 
 # =========================
+#  Konfigurační graf (null model)
+# =========================
+
+def build_configuration_graph_from_hvg(G, seed=42):
+    """
+    Vytvoří jednoduchý konfigurační graf (null model)
+    se stejnou stupňovou posloupností jako HVG graf G.
+    """
+    degrees = [d for _, d in G.degree()]
+    # multigraf s danou degree sequence
+    H_multi = nx.configuration_model(degrees, seed=seed)
+    # převod na jednoduchý graf (zahodí paralelní hrany)
+    H = nx.Graph(H_multi)
+    # odstraníme self-loops
+    H.remove_edges_from(nx.selfloop_edges(H))
+    return H
+
+
+# =========================
 #  Small-world analyzer třída
 # =========================
 
@@ -351,7 +370,7 @@ if st.session_state.data is not None:
 
     st.plotly_chart(fig_ts, use_container_width=True)
 
-    # Statistiky
+    # Statistiky časové řady
     st.write(
         f"- Délka: **{len(arr)}**, "
         f"Průměr: **{arr.mean():.3f}**, "
@@ -508,7 +527,7 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     # Volba, jestli zobrazit textové popisky vrcholů
     show_labels = st.checkbox("Zobrazit popisky vrcholů (indexy)", value=False)
 
-    # Edges
+    # Edges HVG
     edge_x, edge_y = [], []
     for u, v in G.edges():
         x0, y0 = pos[u]
@@ -520,7 +539,7 @@ if st.session_state.show_hvg and st.session_state.data is not None:
         line=dict(width=1, color='#888'), hoverinfo='none'
     )
 
-    # Nodes
+    # Nodes HVG
     node_x, node_y, node_text = [], [], []
     for node in G.nodes():
         x, y = pos[node]
@@ -554,6 +573,175 @@ if st.session_state.show_hvg and st.session_state.data is not None:
         margin=dict(b=20, l=5, r=5, t=40)
     )
     st.plotly_chart(fig_hvg, use_container_width=True)
+
+    # =========================
+    #  Konfigurační graf – pod HVG
+    # =========================
+    st.markdown("### 🔁 Konfigurační graf (null model)")
+
+    show_conf = st.checkbox(
+        "Zobrazit konfigurační graf + metriky (null model se stejnou stupňovou posloupností jako HVG)",
+        value=False
+    )
+
+    if show_conf:
+        G_conf = build_configuration_graph_from_hvg(G, seed=42)
+
+        # --- Metriky konfiguračního grafu ---
+        n_nodes_conf = G_conf.number_of_nodes()
+        n_edges_conf = G_conf.number_of_edges()
+        degrees_conf = [d for _, d in G_conf.degree()]
+        avg_deg_conf = float(np.mean(degrees_conf)) if len(degrees_conf) > 0 else 0.0
+
+        try:
+            C_conf = nx.average_clustering(G_conf)
+        except Exception:
+            C_conf = float("nan")
+
+        is_conn_conf = nx.is_connected(G_conf) if n_nodes_conf > 0 else False
+        L_conf = None
+        diam_conf = None
+        if is_conn_conf and n_nodes_conf > 1:
+            try:
+                L_conf = nx.average_shortest_path_length(G_conf)
+            except Exception:
+                L_conf = None
+            try:
+                diam_conf = nx.diameter(G_conf)
+            except Exception:
+                diam_conf = None
+
+        try:
+            assort_conf = nx.degree_assortativity_coefficient(G_conf)
+        except Exception:
+            assort_conf = None
+
+        # "ER-like" odhad pro konfigurační graf – stejný vzorec
+        L_rand_conf = None
+        C_rand_conf = None
+        if n_nodes_conf > 1 and avg_deg_conf > 1:
+            try:
+                L_rand_conf = np.log(n_nodes_conf) / np.log(avg_deg_conf)
+                C_rand_conf = avg_deg_conf / n_nodes_conf
+            except Exception:
+                L_rand_conf = None
+                C_rand_conf = None
+
+        # Small-world index pro konfigurační graf
+        sigma_conf = None
+        if (
+            C_conf is not None and L_conf is not None and
+            L_rand_conf is not None and C_rand_conf not in (None, 0)
+        ):
+            try:
+                sigma_conf = (C_conf / C_rand_conf) / (L_conf / L_rand_conf)
+            except Exception:
+                sigma_conf = None
+
+        col_conf1, col_conf2 = st.columns(2)
+        with col_conf1:
+            st.markdown("**Konfigurační graf – základní metriky**")
+            st.write(f"- Počet vrcholů: **{n_nodes_conf}**")
+            st.write(f"- Počet hran: **{n_edges_conf}**")
+            st.write(f"- Průměrný stupeň: **{avg_deg_conf:.3f}**")
+            if L_conf is not None:
+                st.write(f"- Průměrná délka cesty L_conf: **{L_conf:.3f}**")
+            else:
+                st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
+            if diam_conf is not None:
+                st.write(f"- Průměr grafu (diameter_conf): **{diam_conf}**")
+            else:
+                st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
+
+        with col_conf2:
+            st.markdown("**Konfigurační graf – clustering, assortativita, σ_conf**")
+            st.write(f"- Clustering coefficient C_conf: **{C_conf:.3f}**")
+            if assort_conf is not None and not np.isnan(assort_conf):
+                st.write(f"- Degree assortativity_conf: **{assort_conf:.3f}**")
+            else:
+                st.write("- Degree assortativity_conf: *není k dispozici*")
+
+            if L_rand_conf is not None and C_rand_conf is not None and C_rand_conf != 0:
+                st.write(
+                    "- Náhodný graf pro konfigurační model (odhad):  \n"
+                    f"  - L_rand_conf ≈ **{L_rand_conf:.3f}**  \n"
+                    f"  - C_rand_conf ≈ **{C_rand_conf:.5f}**"
+                )
+            else:
+                st.write("- L_rand_conf, C_rand_conf: *nelze odhadnout*")
+
+            if sigma_conf is not None and not np.isnan(sigma_conf):
+                st.write(
+                    f"- Small-world index σ_conf: **{sigma_conf:.2f}** "
+                    "(stejná definice jako u HVG)"
+                )
+
+        # --- Porovnání HVG vs. konfigurační graf ---
+        st.markdown("**📊 Porovnání HVG vs. konfigurační graf (null model)**")
+
+        if not np.isnan(C) and not np.isnan(C_conf):
+            st.write(f"- Clustering HVG: **{C:.3f}**, konfigurační graf C_conf: **{C_conf:.3f}**")
+            if C > C_conf * 2:
+                st.info(
+                    "HVG má **výrazně vyšší clustering** než degree-preserving null model – "
+                    "to naznačuje silnou nestrukturovanost vůči náhodnému přepojení hran."
+                )
+
+        if (L is not None) and (L_conf is not None):
+            st.write(f"- Průměrná délka cesty L (HVG): **{L:.3f}**, L_conf: **{L_conf:.3f}**")
+            if L >= L_conf:
+                st.write(
+                    "- HVG má podobné nebo delší cesty než null model, což je konzistentní "
+                    "s small-world strukturou (vyšší clustering, cesty pořád krátké)."
+                )
+
+        if sigma_sw is not None and sigma_conf is not None:
+            st.write(
+                f"- Small-world index HVG: **{sigma_sw:.2f}**, "
+                f"konfigurační graf σ_conf: **{sigma_conf:.2f}**"
+            )
+            if sigma_sw > sigma_conf:
+                st.success(
+                    "σ(HVG) > σ(conf) – skutečný HVG je **víc small-world** než jeho "
+                    "degree-preserving null model."
+                )
+
+        # --- Vizualizace konfiguračního grafu ---
+        st.subheader("🕸️ Konfigurační graf (vizualizace)")
+        pos_conf = nx.spring_layout(G_conf, seed=42)
+        edge_x_c, edge_y_c = [], []
+        for u, v in G_conf.edges():
+            x0, y0 = pos_conf[u]
+            x1, y1 = pos_conf[v]
+            edge_x_c += [x0, x1, None]
+            edge_y_c += [y0, y1, None]
+
+        edge_trace_c = go.Scatter(
+            x=edge_x_c, y=edge_y_c, mode='lines',
+            line=dict(width=1, color='#aaa'), hoverinfo='none'
+        )
+
+        node_x_c, node_y_c = [], []
+        for node in G_conf.nodes():
+            x, y = pos_conf[node]
+            node_x_c.append(x)
+            node_y_c.append(y)
+
+        node_trace_c = go.Scatter(
+            x=node_x_c, y=node_y_c, mode='markers',
+            hoverinfo='none',
+            marker=dict(size=8, color='lightgreen', line_width=1),
+        )
+
+        fig_conf = go.Figure(data=[edge_trace_c, node_trace_c])
+        fig_conf.update_layout(
+            title="Konfigurační graf se stejnou stupňovou posloupností jako HVG",
+            showlegend=False, hovermode='closest',
+            margin=dict(b=20, l=5, r=5, t=40)
+        )
+        st.plotly_chart(fig_conf, use_container_width=True)
+
+    st.markdown("---")
 
     # Histogram stupňů
     degs = degrees
