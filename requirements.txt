@@ -5,6 +5,8 @@ pandas
 numpy
 plotly
 scipy
+powerlaw
+re
 # venv\Scripts\activate
 # pip install -r requirements.txt
 # streamlit python app.py
