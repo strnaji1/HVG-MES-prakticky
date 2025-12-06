@@ -207,9 +207,9 @@ class SmallWorldAnalyzer:
 #  Inicializace session state
 # =========================
 
-for key in ("data", "show_hvg", "show_direct", "show_horiz", "custom_graph"):
+for key in ("data", "data2", "show_hvg", "show_direct", "show_horiz", "custom_graph"):
     if key not in st.session_state:
-        if key == "data":
+        if key in ("data", "data2"):
             st.session_state[key] = None
         elif key == "custom_graph":
             st.session_state[key] = None
@@ -447,15 +447,15 @@ if analysis_mode == "Časová řada → HVG":
             "💾 Export HVG a metrik",
         ]
         selected_sections = st.multiselect(
-    "Co chceš pod HVG zobrazit?",
-    options=section_options,
-    default=[
-        "📊 Metriky HVG",
-        "📉 Rozdělení stupňů + power-law",
-        "🎨 Arc Diagram HVG",
-        "💾 Export HVG a metrik",
-    ]
-)
+            "Co chceš pod HVG zobrazit?",
+            options=section_options,
+            default=[
+                "📊 Metriky HVG",
+                "📉 Rozdělení stupňů + power-law",
+                "🎨 Arc Diagram HVG",
+                "💾 Export HVG a metrik",
+            ]
+        )
 
         # ====== Analytické statistiky HVG (počítáme vždy, ale zobrazíme jen pokud chceš) ======
         n_nodes = G.number_of_nodes()
@@ -1544,192 +1544,158 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
 #  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
 # =====================================================================
 
-# =====================================================================
-#  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
-# =====================================================================
-
 else:  # "Porovnat dvě časové řady"
-    st.sidebar.subheader("Série 1")
-    src1 = st.sidebar.selectbox(
-        "Zdroj série 1",
-        ["Nahrát CSV", "Ruční vstup", "Náhodná normální", "Sinusovka", "Chaotický generátor"],
-        index=0
-    )
+    st.markdown("## ⚖️ Porovnání dvou časových řad a jejich HVG")
 
-    st.sidebar.subheader("Série 2")
-    src2 = st.sidebar.selectbox(
-        "Zdroj série 2",
-        ["Nahrát CSV", "Ruční vstup", "Náhodná normální", "Sinusovka", "Chaotický generátor"],
-        index=0
-    )
+    if st.session_state.data is None:
+        st.info("Nejdřív vygeneruj časovou řadu v režimu **„Časová řada → HVG“**. "
+                "Tahle série pak bude použita jako *Série 1* pro porovnání.")
+    else:
+        # =============================
+        # Série 1 = už vygenerovaná časová řada
+        # =============================
+        data1 = st.session_state.data
+        st.markdown("### Série 1 – aktuálně vygenerovaná časová řada")
 
-    data1 = None
-    data2 = None
-
-    # --- Série 1 ---
-    if src1 == "Nahrát CSV":
-        file1 = st.sidebar.file_uploader("CSV pro sérii 1", type="csv", key="csv_cmp_1")
-        if file1 is not None:
-            df1 = pd.read_csv(file1)
-            data1 = df1.iloc[:, 0].values
-
-    elif src1 == "Ruční vstup":
-        txt1 = st.sidebar.text_area("Hodnoty série 1 (čárka)", "1, 2, 3, 4, 5")
-        try:
-            data1 = np.array([float(v.strip()) for v in txt1.split(",")])
-        except ValueError:
-            st.sidebar.error("Chybný formát série 1.")
-
-    elif src1 == "Náhodná normální":
-        length1 = st.sidebar.slider("Délka série 1", 10, 1000, 100, key="len_cmp1")
-        mu1 = st.sidebar.number_input("μ (série 1)", value=0.0, key="mu_cmp1")
-        sigma1 = st.sidebar.number_input("σ (série 1)", value=1.0, key="sigma_cmp1")
-        data1 = np.random.normal(mu1, sigma1, size=length1)
-
-    elif src1 == "Sinusovka":
-        length1 = st.sidebar.slider("Délka série 1", 10, 1000, 200, key="len_sin1")
-        amp1 = st.sidebar.number_input("Amplituda 1", value=1.0, key="amp_sin1")
-        freq1 = st.sidebar.number_input("Frekvence 1", value=1.0, key="frq_sin1")
-        x1 = np.arange(length1)
-        data1 = amp1 * np.sin(2 * np.pi * freq1 * x1 / length1)
-
-    else:  # Chaotický generátor – série 1
-        chaos1 = st.sidebar.selectbox(
-            "Typ chaotického generátoru (série 1)",
-            ["Logistická mapa", "Henonova mapa", "Lorenzův systém (x-složka)", "1/f šum (pink noise)"],
-            key="chaos_type_1"
+        st.write(
+            f"- Délka: **{len(data1)}**, "
+            f"Průměr: **{data1.mean():.3f}**, "
+            f"Rozptyl: **{data1.var():.3f}**"
         )
 
-        if chaos1 == "Logistická mapa":
-            length1 = st.sidebar.slider("Délka série 1", 100, 5000, 1000, step=100, key="len_log_1")
-            r1 = st.sidebar.slider("Parametr r (série 1)", 3.5, 4.0, 3.9, step=0.01, key="r_log_1")
-            x01 = st.sidebar.number_input("Počáteční x₀ (série 1)", min_value=0.0, max_value=1.0, value=0.2, step=0.01, key="x0_log_1")
-            burn1 = st.sidebar.number_input("Burn-in iterace (série 1)", 100, 10000, 500, step=100, key="burn_log_1")
-            data1 = generate_logistic_map(length1, r=r1, x0=x01, burn=burn1)
-
-        elif chaos1 == "Henonova mapa":
-            length1 = st.sidebar.slider("Délka série 1", 100, 5000, 1000, step=100, key="len_hen_1")
-            a1 = st.sidebar.number_input("Parametr a (série 1)", value=1.4, step=0.1, key="a_hen_1")
-            b1 = st.sidebar.number_input("Parametr b (série 1)", value=0.3, step=0.05, key="b_hen_1")
-            x01 = st.sidebar.number_input("Počáteční x₀ (série 1)", value=0.1, step=0.05, key="x0_hen_1")
-            y01 = st.sidebar.number_input("Počáteční y₀ (série 1)", value=0.0, step=0.05, key="y0_hen_1")
-            burn1 = st.sidebar.number_input("Burn-in iterace (série 1)", 100, 10000, 500, step=100, key="burn_hen_1")
-            data1 = generate_henon_map(length1, a=a1, b=b1, x0=x01, y0=y01, burn=burn1)
-
-        elif chaos1 == "Lorenzův systém (x-složka)":
-            length1 = st.sidebar.slider("Délka série 1", 200, 10000, 2000, step=200, key="len_lor_1")
-            dt1 = st.sidebar.number_input("Krok integrace dt (série 1)", value=0.01, step=0.005, format="%.3f", key="dt_lor_1")
-            sigma_l1 = st.sidebar.number_input("σ (série 1)", value=10.0, step=1.0, key="sigma_lor_1")
-            rho_l1 = st.sidebar.number_input("ρ (série 1)", value=28.0, step=1.0, key="rho_lor_1")
-            beta_l1 = st.sidebar.number_input("β (série 1)", value=8/3, step=0.1, key="beta_lor_1")
-            burn1 = st.sidebar.number_input("Burn-in kroků (série 1)", 500, 20000, 1000, step=500, key="burn_lor_1")
-            data1 = generate_lorenz_x(length1, dt=dt1,
-                                      sigma=sigma_l1, rho=rho_l1, beta=beta_l1,
-                                      burn=burn1)
-
-        else:  # 1/f šum
-            length1 = st.sidebar.slider("Délka série 1", 100, 10000, 2000, step=100, key="len_pink_1")
-            data1 = generate_pink_noise(length1)
-
-    # --- Série 2 ---
-    if src2 == "Nahrát CSV":
-        file2 = st.sidebar.file_uploader("CSV pro sérii 2", type="csv", key="csv_cmp_2")
-        if file2 is not None:
-            df2 = pd.read_csv(file2)
-            data2 = df2.iloc[:, 0].values
-
-    elif src2 == "Ruční vstup":
-        txt2 = st.sidebar.text_area("Hodnoty série 2 (čárka)", "2, 4, 6, 8, 10")
+        # HVG pro sérii 1
+        G1 = build_hvg(data1)
+        n1 = G1.number_of_nodes()
+        m1 = G1.number_of_edges()
+        degs1 = [d for _, d in G1.degree()]
+        avg_deg1 = float(np.mean(degs1)) if len(degs1) > 0 else 0.0
         try:
-            data2 = np.array([float(v.strip()) for v in txt2.split(",")])
-        except ValueError:
-            st.sidebar.error("Chybný formát série 2.")
-
-    elif src2 == "Náhodná normální":
-        length2 = st.sidebar.slider("Délka série 2", 10, 1000, 100, key="len_cmp2")
-        mu2 = st.sidebar.number_input("μ (série 2)", value=0.0, key="mu_cmp2")
-        sigma2 = st.sidebar.number_input("σ (série 2)", value=1.0, key="sigma_cmp2")
-        data2 = np.random.normal(mu2, sigma2, size=length2)
-
-    elif src2 == "Sinusovka":
-        length2 = st.sidebar.slider("Délka série 2", 10, 1000, 200, key="len_sin2")
-        amp2 = st.sidebar.number_input("Amplituda 2", value=1.0, key="amp_sin2")
-        freq2 = st.sidebar.number_input("Frekvence 2", value=1.0, key="frq_sin2")
-        x2 = np.arange(length2)
-        data2 = amp2 * np.sin(2 * np.pi * freq2 * x2 / length2)
-
-    else:  # Chaotický generátor – série 2
-        chaos2 = st.sidebar.selectbox(
-            "Typ chaotického generátoru (série 2)",
-            ["Logistická mapa", "Henonova mapa", "Lorenzův systém (x-složka)", "1/f šum (pink noise)"],
-            key="chaos_type_2"
-        )
-
-        if chaos2 == "Logistická mapa":
-            length2 = st.sidebar.slider("Délka série 2", 100, 5000, 1000, step=100, key="len_log_2")
-            r2 = st.sidebar.slider("Parametr r (série 2)", 3.5, 4.0, 3.9, step=0.01, key="r_log_2")
-            x02 = st.sidebar.number_input("Počáteční x₀ (série 2)", min_value=0.0, max_value=1.0, value=0.2, step=0.01, key="x0_log_2")
-            burn2 = st.sidebar.number_input("Burn-in iterace (série 2)", 100, 10000, 500, step=100, key="burn_log_2")
-            data2 = generate_logistic_map(length2, r=r2, x0=x02, burn=burn2)
-
-        elif chaos2 == "Henonova mapa":
-            length2 = st.sidebar.slider("Délka série 2", 100, 5000, 1000, step=100, key="len_hen_2")
-            a2 = st.sidebar.number_input("Parametr a (série 2)", value=1.4, step=0.1, key="a_hen_2")
-            b2 = st.sidebar.number_input("Parametr b (série 2)", value=0.3, step=0.05, key="b_hen_2")
-            x02 = st.sidebar.number_input("Počáteční x₀ (série 2)", value=0.1, step=0.05, key="x0_hen_2")
-            y02 = st.sidebar.number_input("Počáteční y₀ (série 2)", value=0.0, step=0.05, key="y0_hen_2")
-            burn2 = st.sidebar.number_input("Burn-in iterace (série 2)", 100, 10000, 500, step=100, key="burn_hen_2")
-            data2 = generate_henon_map(length2, a=a2, b=b2, x0=x02, y0=y02, burn=burn2)
-
-        elif chaos2 == "Lorenzův systém (x-složka)":
-            length2 = st.sidebar.slider("Délka série 2", 200, 10000, 2000, step=200, key="len_lor_2")
-            dt2 = st.sidebar.number_input("Krok integrace dt (série 2)", value=0.01, step=0.005, format="%.3f", key="dt_lor_2")
-            sigma_l2 = st.sidebar.number_input("σ (série 2)", value=10.0, step=1.0, key="sigma_lor_2")
-            rho_l2 = st.sidebar.number_input("ρ (série 2)", value=28.0, step=1.0, key="rho_lor_2")
-            beta_l2 = st.sidebar.number_input("β (série 2)", value=8/3, step=0.1, key="beta_lor_2")
-            burn2 = st.sidebar.number_input("Burn-in kroků (série 2)", 500, 20000, 1000, step=500, key="burn_lor_2")
-            data2 = generate_lorenz_x(length2, dt=dt2,
-                                      sigma=sigma_l2, rho=rho_l2, beta=beta_l2,
-                                      burn=burn2)
-
-        else:  # 1/f šum
-            length2 = st.sidebar.slider("Délka série 2", 100, 10000, 2000, step=100, key="len_pink_2")
-            data2 = generate_pink_noise(length2)
-
-    compare_btn = st.sidebar.button("🔍 Spočítat a porovnat")
-
-    if compare_btn:
-        if data1 is None or data2 is None:
-            st.error("Obě série musí být správně načtené / zadáné.")
-        else:
-            # Zbytek porovnávací logiky nech tak, jak už ho máš (HVG, metriky, grafy…)
-            ...
-
-            st.markdown("## ⚖️ Porovnání dvou časových řad a jejich HVG")
-
-            # Série 1
-            G1 = build_hvg(data1)
-            n1 = G1.number_of_nodes()
-            m1 = G1.number_of_edges()
-            degs1 = [d for _, d in G1.degree()]
-            avg_deg1 = float(np.mean(degs1)) if len(degs1) > 0 else 0.0
+            C1 = nx.average_clustering(G1)
+        except Exception:
+            C1 = float("nan")
+        is_conn1 = nx.is_connected(G1) if n1 > 0 else False
+        L1 = None
+        diam1 = None
+        if is_conn1 and n1 > 1:
             try:
-                C1 = nx.average_clustering(G1)
+                L1 = nx.average_shortest_path_length(G1)
             except Exception:
-                C1 = float("nan")
-            is_conn1 = nx.is_connected(G1) if n1 > 0 else False
-            L1 = None
-            if is_conn1 and n1 > 1:
-                try:
-                    L1 = nx.average_shortest_path_length(G1)
-                except Exception:
-                    L1 = None
-            L_rand1 = np.log(n1) / np.log(avg_deg1) if n1 > 1 and avg_deg1 > 1 else None
-            C_rand1 = avg_deg1 / n1 if n1 > 0 else None
-            analyzer1 = SmallWorldAnalyzer(C1, L1, C_rand1, L_rand1)
-            sigma1 = analyzer1.sigma
+                L1 = None
+            try:
+                diam1 = nx.diameter(G1)
+            except Exception:
+                diam1 = None
+        L_rand1 = np.log(n1) / np.log(avg_deg1) if n1 > 1 and avg_deg1 > 1 else None
+        C_rand1 = avg_deg1 / n1 if n1 > 0 else None
+        try:
+            assort1 = nx.degree_assortativity_coefficient(G1)
+        except Exception:
+            assort1 = None
+        analyzer1 = SmallWorldAnalyzer(C1, L1, C_rand1, L_rand1)
+        sigma1 = analyzer1.sigma
 
-            # Série 2
+        # =============================
+        # Sidebar – nastavení série 2
+        # =============================
+        st.sidebar.subheader("Série 2 – nastavení")
+
+        src2 = st.sidebar.selectbox(
+            "Zdroj série 2",
+            ["Nahrát CSV", "Ruční vstup", "Náhodná normální", "Sinusovka", "Chaotický generátor"],
+            index=0
+        )
+
+        data2_candidate = None
+
+        if src2 == "Nahrát CSV":
+            file2 = st.sidebar.file_uploader("CSV pro sérii 2", type="csv", key="csv_cmp_2")
+            if file2 is not None:
+                df2 = pd.read_csv(file2)
+                data2_candidate = df2.iloc[:, 0].values
+
+        elif src2 == "Ruční vstup":
+            txt2 = st.sidebar.text_area("Hodnoty série 2 (čárka)", "2, 4, 6, 8, 10")
+            try:
+                data2_candidate = np.array([float(v.strip()) for v in txt2.split(",")])
+            except ValueError:
+                st.sidebar.error("Chybný formát série 2.")
+
+        elif src2 == "Náhodná normální":
+            length2 = st.sidebar.slider("Délka série 2", 10, 1000, 100, key="len_cmp2")
+            mu2 = st.sidebar.number_input("μ (série 2)", value=0.0, key="mu_cmp2")
+            sigma2 = st.sidebar.number_input("σ (série 2)", value=1.0, key="sigma_cmp2")
+            data2_candidate = np.random.normal(mu2, sigma2, size=length2)
+
+        elif src2 == "Sinusovka":
+            length2 = st.sidebar.slider("Délka série 2", 10, 1000, 200, key="len_sin2")
+            amp2 = st.sidebar.number_input("Amplituda 2", value=1.0, key="amp_sin2")
+            freq2 = st.sidebar.number_input("Frekvence 2", value=1.0, key="frq_sin2")
+            x2 = np.arange(length2)
+            data2_candidate = amp2 * np.sin(2 * np.pi * freq2 * x2 / length2)
+
+        else:  # Chaotický generátor – série 2
+            chaos2 = st.sidebar.selectbox(
+                "Typ chaotického generátoru (série 2)",
+                ["Logistická mapa", "Henonova mapa", "Lorenzův systém (x-složka)", "1/f šum (pink noise)"],
+                key="chaos_type_2"
+            )
+
+            if chaos2 == "Logistická mapa":
+                length2 = st.sidebar.slider("Délka série 2", 100, 5000, 1000, step=100, key="len_log_2")
+                r2 = st.sidebar.slider("Parametr r (série 2)", 3.5, 4.0, 3.9, step=0.01, key="r_log_2")
+                x02 = st.sidebar.number_input("Počáteční x₀ (série 2)", min_value=0.0, max_value=1.0, value=0.2, step=0.01, key="x0_log_2")
+                burn2 = st.sidebar.number_input("Burn-in iterace (série 2)", 100, 10000, 500, step=100, key="burn_log_2")
+                data2_candidate = generate_logistic_map(length2, r=r2, x0=x02, burn=burn2)
+
+            elif chaos2 == "Henonova mapa":
+                length2 = st.sidebar.slider("Délka série 2", 100, 5000, 1000, step=100, key="len_hen_2")
+                a2 = st.sidebar.number_input("Parametr a (série 2)", value=1.4, step=0.1, key="a_hen_2")
+                b2 = st.sidebar.number_input("Parametr b (série 2)", value=0.3, step=0.05, key="b_hen_2")
+                x02 = st.sidebar.number_input("Počáteční x₀ (série 2)", value=0.1, step=0.05, key="x0_hen_2")
+                y02 = st.sidebar.number_input("Počáteční y₀ (série 2)", value=0.0, step=0.05, key="y0_hen_2")
+                burn2 = st.sidebar.number_input("Burn-in iterace (série 2)", 100, 10000, 500, step=100, key="burn_hen_2")
+                data2_candidate = generate_henon_map(length2, a=a2, b=b2, x0=x02, y0=y02, burn=burn2)
+
+            elif chaos2 == "Lorenzův systém (x-složka)":
+                length2 = st.sidebar.slider("Délka série 2", 200, 10000, 2000, step=200, key="len_lor_2")
+                dt2 = st.sidebar.number_input("Krok integrace dt (série 2)", value=0.01, step=0.005, format="%.3f", key="dt_lor_2")
+                sigma_l2 = st.sidebar.number_input("σ (série 2)", value=10.0, step=1.0, key="sigma_lor_2")
+                rho_l2 = st.sidebar.number_input("ρ (série 2)", value=28.0, step=1.0, key="rho_lor_2")
+                beta_l2 = st.sidebar.number_input("β (série 2)", value=8/3, step=0.1, key="beta_lor_2")
+                burn2 = st.sidebar.number_input("Burn-in kroků (série 2)", 500, 20000, 1000, step=500, key="burn_lor_2")
+                data2_candidate = generate_lorenz_x(length2, dt=dt2,
+                                                    sigma=sigma_l2, rho=rho_l2, beta=beta_l2,
+                                                    burn=burn2)
+
+            else:  # 1/f šum
+                length2 = st.sidebar.slider("Délka série 2", 100, 10000, 2000, step=100, key="len_pink_2")
+                data2_candidate = generate_pink_noise(length2)
+
+        generate2 = st.sidebar.button("Načíst / generovat sérii 2")
+
+        if generate2:
+            if data2_candidate is None:
+                st.sidebar.error("Série 2 zatím není připravená – zkontroluj nastavení / CSV.")
+            else:
+                st.session_state.data2 = data2_candidate
+
+        data2 = st.session_state.data2
+
+        if data2 is None:
+            st.info("👈 V levém panelu nastav parametry **Série 2** a klikni na "
+                    "**„Načíst / generovat sérii 2“**.")
+        else:
+            # =============================
+            # Série 2 – výpočet HVG a metrik
+            # =============================
+            st.markdown("### Série 2 – nastavená v levém panelu")
+
+            st.write(
+                f"- Délka: **{len(data2)}**, "
+                f"Průměr: **{data2.mean():.3f}**, "
+                f"Rozptyl: **{data2.var():.3f}**"
+            )
+
             G2 = build_hvg(data2)
             n2 = G2.number_of_nodes()
             m2 = G2.number_of_edges()
@@ -1741,48 +1707,61 @@ else:  # "Porovnat dvě časové řady"
                 C2 = float("nan")
             is_conn2 = nx.is_connected(G2) if n2 > 0 else False
             L2 = None
+            diam2 = None
             if is_conn2 and n2 > 1:
                 try:
                     L2 = nx.average_shortest_path_length(G2)
                 except Exception:
                     L2 = None
+                try:
+                    diam2 = nx.diameter(G2)
+                except Exception:
+                    diam2 = None
             L_rand2 = np.log(n2) / np.log(avg_deg2) if n2 > 1 and avg_deg2 > 1 else None
             C_rand2 = avg_deg2 / n2 if n2 > 0 else None
+            try:
+                assort2 = nx.degree_assortativity_coefficient(G2)
+            except Exception:
+                assort2 = None
             analyzer2 = SmallWorldAnalyzer(C2, L2, C_rand2, L_rand2)
             sigma2 = analyzer2.sigma
 
-            # Tabulka metrik
-            metrics_cmp = pd.DataFrame(
-                {
-                    "n_nodes": [n1, n2],
-                    "n_edges": [m1, m2],
-                    "avg_degree": [avg_deg1, avg_deg2],
-                    "C": [C1, C2],
-                    "L": [L1, L2],
-                    "L_rand": [L_rand1, L_rand2],
-                    "C_rand": [C_rand1, C_rand2],
-                    "sigma": [sigma1, sigma2],
-                },
-                index=["Série 1", "Série 2"]
+            # =============================
+            # Společný výběr sekcí pro obě HVG
+            # =============================
+            section_options_cmp = [
+                "📊 Metriky HVG",
+                "📉 Rozdělení stupňů",
+                "🎨 Arc Diagram HVG",
+                "💾 Export HVG a metrik",
+            ]
+            selected_sections_cmp = st.multiselect(
+                "Co chceš pod porovnáním zobrazit pro **obě** HVG?",
+                options=section_options_cmp,
+                default=section_options_cmp  # všechno defaultně
             )
-            st.markdown("### 📋 Porovnání metrik HVG")
-            st.dataframe(metrics_cmp)
 
+            # =============================
             # Časové řady vedle sebe
-            st.markdown("### 📈 Časové řady")
+            # =============================
+            st.markdown("### 📈 Časové řady vedle sebe")
 
             col_ts1, col_ts2 = st.columns(2)
             with col_ts1:
                 df1 = pd.DataFrame({"index": np.arange(len(data1)), "value": data1})
                 fig1 = px.line(df1, x="index", y="value", markers=True, title="Série 1")
+                fig1.update_traces(marker_size=6)
                 st.plotly_chart(fig1, use_container_width=True)
             with col_ts2:
                 df2 = pd.DataFrame({"index": np.arange(len(data2)), "value": data2})
                 fig2 = px.line(df2, x="index", y="value", markers=True, title="Série 2")
+                fig2.update_traces(marker_size=6)
                 st.plotly_chart(fig2, use_container_width=True)
 
+            # =============================
             # HVG vizualizace vedle sebe
-            st.markdown("### 🕸️ HVG grafy")
+            # =============================
+            st.markdown("### 🕸️ HVG grafy vedle sebe")
 
             col_g1, col_g2 = st.columns(2)
             with col_g1:
@@ -1847,24 +1826,274 @@ else:  # "Porovnat dvě časové řady"
                 )
                 st.plotly_chart(fig_g2, use_container_width=True)
 
-            # Porovnání stupňového rozdělení
-            st.markdown("### 📊 Porovnání stupňového rozdělení")
+            # =============================
+            # 📊 Metriky HVG
+            # =============================
+            if "📊 Metriky HVG" in selected_sections_cmp:
+                st.markdown("### 📊 Porovnání metrik HVG")
 
-            df_deg_cmp = pd.DataFrame({
-                "degree": degs1 + degs2,
-                "serie": (["Série 1"] * len(degs1)) + (["Série 2"] * len(degs2))
-            })
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    st.markdown("**Série 1 – metriky HVG**")
+                    st.write(f"- Počet vrcholů: **{n1}**")
+                    st.write(f"- Počet hran: **{m1}**")
+                    st.write(f"- Průměrný stupeň: **{avg_deg1:.3f}**")
+                    if L1 is not None:
+                        st.write(f"- Průměrná délka cesty L: **{L1:.3f}**")
+                    else:
+                        st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*")
+                    if diam1 is not None:
+                        st.write(f"- Průměr grafu (diameter): **{diam1}**")
+                    else:
+                        st.write("- Průměr grafu (diameter): *není k dispozici*")
+                    st.write(f"- Clustering coefficient C: **{C1:.3f}**")
+                    if assort1 is not None and not np.isnan(assort1):
+                        st.write(f"- Degree assortativity: **{assort1:.3f}**")
+                    else:
+                        st.write("- Degree assortativity: *není k dispozici*")
+                    if L_rand1 is not None and C_rand1 is not None and C_rand1 != 0:
+                        st.write(
+                            "- Náhodný graf:  \n"
+                            f"  - L_rand ≈ **{L_rand1:.3f}**  \n"
+                            f"  - C_rand ≈ **{C_rand1:.5f}**"
+                        )
+                    if sigma1 is not None and not np.isnan(sigma1):
+                        st.write(f"- Small-world index σ: **{sigma1:.2f}**")
+                        level1, msg1 = analyzer1.interpretation(atol=0.05)
+                        if level1 == "success":
+                            st.success(msg1)
+                        elif level1 == "warning":
+                            st.warning(msg1)
+                        else:
+                            st.info(msg1)
 
-            fig_deg_cmp = px.histogram(
-                df_deg_cmp,
-                x="degree",
-                color="serie",
-                barmode="overlay",
-                opacity=0.6,
-                nbins=max(max(degs1) if len(degs1) > 0 else 1,
-                          max(degs2) if len(degs2) > 0 else 1) + 1,
-                title="Histogram stupňů – série 1 vs. série 2",
-                labels={"degree": "Stupeň", "count": "Počet vrcholů"}
-            )
-            fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
-            st.plotly_chart(fig_deg_cmp, use_container_width=True)
+                with col_m2:
+                    st.markdown("**Série 2 – metriky HVG**")
+                    st.write(f"- Počet vrcholů: **{n2}**")
+                    st.write(f"- Počet hran: **{m2}**")
+                    st.write(f"- Průměrný stupeň: **{avg_deg2:.3f}**")
+                    if L2 is not None:
+                        st.write(f"- Průměrná délka cesty L: **{L2:.3f}**")
+                    else:
+                        st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*")
+                    if diam2 is not None:
+                        st.write(f"- Průměr grafu (diameter): **{diam2}**")
+                    else:
+                        st.write("- Průměr grafu (diameter): *není k dispozici*")
+                    st.write(f"- Clustering coefficient C: **{C2:.3f}**")
+                    if assort2 is not None and not np.isnan(assort2):
+                        st.write(f"- Degree assortativity: **{assort2:.3f}**")
+                    else:
+                        st.write("- Degree assortativity: *není k dispozici*")
+                    if L_rand2 is not None and C_rand2 is not None and C_rand2 != 0:
+                        st.write(
+                            "- Náhodný graf:  \n"
+                            f"  - L_rand ≈ **{L_rand2:.3f}**  \n"
+                            f"  - C_rand ≈ **{C_rand2:.5f}**"
+                        )
+                    if sigma2 is not None and not np.isnan(sigma2):
+                        st.write(f"- Small-world index σ: **{sigma2:.2f}**")
+                        level2, msg2 = analyzer2.interpretation(atol=0.05)
+                        if level2 == "success":
+                            st.success(msg2)
+                        elif level2 == "warning":
+                            st.warning(msg2)
+                        else:
+                            st.info(msg2)
+
+            # =============================
+            # 📉 Porovnání stupňového rozdělení
+            # =============================
+            if "📉 Rozdělení stupňů" in selected_sections_cmp:
+                st.markdown("### 📉 Porovnání stupňového rozdělení")
+
+                df_deg_cmp = pd.DataFrame({
+                    "degree": degs1 + degs2,
+                    "serie": (["Série 1"] * len(degs1)) + (["Série 2"] * len(degs2))
+                })
+
+                max_deg = max(
+                    max(degs1) if len(degs1) > 0 else 1,
+                    max(degs2) if len(degs2) > 0 else 1
+                )
+
+                fig_deg_cmp = px.histogram(
+                    df_deg_cmp,
+                    x="degree",
+                    color="serie",
+                    barmode="overlay",
+                    opacity=0.6,
+                    nbins=max_deg + 1,
+                    title="Histogram stupňů – série 1 vs. série 2",
+                    labels={"degree": "Stupeň", "count": "Počet vrcholů"}
+                )
+                fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
+                st.plotly_chart(fig_deg_cmp, use_container_width=True)
+
+            # =============================
+            # 🎨 Arc Diagram pro obě HVG
+            # =============================
+            if "🎨 Arc Diagram HVG" in selected_sections_cmp:
+                st.markdown("### 🎨 Arc Diagramy HVG – porovnání")
+
+                col_arc1, col_arc2 = st.columns(2)
+
+                with col_arc1:
+                    n = len(data1)
+                    node_x_line = np.arange(n)
+                    node_y_line = np.zeros(n)
+                    fig_arc1 = go.Figure()
+
+                    for i, j in G1.edges():
+                        r = (j - i) / 2
+                        mid = i + r
+                        theta = np.linspace(0, np.pi, 100)
+                        x_arc = mid + r * np.cos(theta)
+                        y_arc = r * np.sin(theta)
+                        fig_arc1.add_trace(go.Scatter(
+                            x=x_arc, y=y_arc, mode='lines',
+                            line=dict(color='gray', width=1),
+                            hoverinfo='none'
+                        ))
+
+                    fig_arc1.add_trace(go.Scatter(
+                        x=node_x_line, y=node_y_line, mode='markers',
+                        marker=dict(size=8, color='skyblue'),
+                        hoverinfo='text',
+                        hovertext=[f"Index: {i}<br>Hodnota: {data1[i]:.3f}" for i in node_x_line]
+                    ))
+
+                    fig_arc1.update_layout(
+                        title="Arc Diagram HVG – série 1",
+                        showlegend=False,
+                        xaxis=dict(showgrid=False, zeroline=False, title="Index"),
+                        yaxis=dict(showgrid=False, zeroline=False, visible=False),
+                        margin=dict(b=20, l=5, r=5, t=40),
+                        height=300
+                    )
+                    st.plotly_chart(fig_arc1, use_container_width=True)
+
+                with col_arc2:
+                    n = len(data2)
+                    node_x_line = np.arange(n)
+                    node_y_line = np.zeros(n)
+                    fig_arc2 = go.Figure()
+
+                    for i, j in G2.edges():
+                        r = (j - i) / 2
+                        mid = i + r
+                        theta = np.linspace(0, np.pi, 100)
+                        x_arc = mid + r * np.cos(theta)
+                        y_arc = r * np.sin(theta)
+                        fig_arc2.add_trace(go.Scatter(
+                            x=x_arc, y=y_arc, mode='lines',
+                            line=dict(color='gray', width=1),
+                            hoverinfo='none'
+                        ))
+
+                    fig_arc2.add_trace(go.Scatter(
+                        x=node_x_line, y=node_y_line, mode='markers',
+                        marker=dict(size=8, color='lightgreen'),
+                        hoverinfo='text',
+                        hovertext=[f"Index: {i}<br>Hodnota: {data2[i]:.3f}" for i in node_x_line]
+                    ))
+
+                    fig_arc2.update_layout(
+                        title="Arc Diagram HVG – série 2",
+                        showlegend=False,
+                        xaxis=dict(showgrid=False, zeroline=False, title="Index"),
+                        yaxis=dict(showgrid=False, zeroline=False, visible=False),
+                        margin=dict(b=20, l=5, r=5, t=40),
+                        height=300
+                    )
+                    st.plotly_chart(fig_arc2, use_container_width=True)
+
+            # =============================
+            # 💾 Export HVG a metrik pro obě série
+            # =============================
+            if "💾 Export HVG a metrik" in selected_sections_cmp:
+                st.markdown("### 💾 Export HVG a metrik pro obě série")
+
+                # Série 1
+                edges_df1 = pd.DataFrame(list(G1.edges()), columns=["source", "target"])
+                edges_csv1 = edges_df1.to_csv(index=False).encode("utf-8")
+                adj_df1 = nx.to_pandas_adjacency(G1)
+                adj_csv1 = adj_df1.to_csv().encode("utf-8")
+                metrics_dict1 = {
+                    "n_nodes": n1,
+                    "n_edges": m1,
+                    "avg_degree": avg_deg1,
+                    "C": C1,
+                    "L": L1,
+                    "diameter": diam1,
+                    "assortativity": assort1,
+                    "L_rand": L_rand1,
+                    "C_rand": C_rand1,
+                    "sigma": sigma1,
+                }
+                metrics_df1 = pd.DataFrame([metrics_dict1])
+                metrics_csv1 = metrics_df1.to_csv(index=False).encode("utf-8")
+
+                # Série 2
+                edges_df2 = pd.DataFrame(list(G2.edges()), columns=["source", "target"])
+                edges_csv2 = edges_df2.to_csv(index=False).encode("utf-8")
+                adj_df2 = nx.to_pandas_adjacency(G2)
+                adj_csv2 = adj_df2.to_csv().encode("utf-8")
+                metrics_dict2 = {
+                    "n_nodes": n2,
+                    "n_edges": m2,
+                    "avg_degree": avg_deg2,
+                    "C": C2,
+                    "L": L2,
+                    "diameter": diam2,
+                    "assortativity": assort2,
+                    "L_rand": L_rand2,
+                    "C_rand": C_rand2,
+                    "sigma": sigma2,
+                }
+                metrics_df2 = pd.DataFrame([metrics_dict2])
+                metrics_csv2 = metrics_df2.to_csv(index=False).encode("utf-8")
+
+                col_exp1, col_exp2 = st.columns(2)
+
+                with col_exp1:
+                    st.markdown("**Série 1 – exporty**")
+                    st.download_button(
+                        "⬇️ HVG (edge list, CSV) – série 1",
+                        data=edges_csv1,
+                        file_name="hvg_series1_edgelist.csv",
+                        mime="text/csv"
+                    )
+                    st.download_button(
+                        "⬇️ HVG (adjacency matrix, CSV) – série 1",
+                        data=adj_csv1,
+                        file_name="hvg_series1_adjacency.csv",
+                        mime="text/csv"
+                    )
+                    st.download_button(
+                        "⬇️ Metriky HVG – série 1",
+                        data=metrics_csv1,
+                        file_name="hvg_series1_metrics.csv",
+                        mime="text/csv"
+                    )
+
+                with col_exp2:
+                    st.markdown("**Série 2 – exporty**")
+                    st.download_button(
+                        "⬇️ HVG (edge list, CSV) – série 2",
+                        data=edges_csv2,
+                        file_name="hvg_series2_edgelist.csv",
+                        mime="text/csv"
+                    )
+                    st.download_button(
+                        "⬇️ HVG (adjacency matrix, CSV) – série 2",
+                        data=adj_csv2,
+                        file_name="hvg_series2_adjacency.csv",
+                        mime="text/csv"
+                    )
+                    st.download_button(
+                        "⬇️ Metriky HVG – série 2",
+                        data=metrics_csv2,
+                        file_name="hvg_series2_metrics.csv",
+                        mime="text/csv"
+                    )
