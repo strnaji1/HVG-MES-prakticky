@@ -587,6 +587,42 @@ if st.session_state.show_hvg and st.session_state.data is not None:
     if show_conf:
         G_conf = build_configuration_graph_from_hvg(G, seed=42)
 
+        # --- VIZUALIZACE KONFIGURAČNÍHO GRAFU HNED POD NADPISEM ---
+        st.subheader("🕸️ Konfigurační graf (vizualizace)")
+        pos_conf = nx.spring_layout(G_conf, seed=42)
+
+        edge_x_c, edge_y_c = [], []
+        for u, v in G_conf.edges():
+            x0, y0 = pos_conf[u]
+            x1, y1 = pos_conf[v]
+            edge_x_c += [x0, x1, None]
+            edge_y_c += [y0, y1, None]
+
+        edge_trace_c = go.Scatter(
+            x=edge_x_c, y=edge_y_c, mode='lines',
+            line=dict(width=1, color='#aaa'), hoverinfo='none'
+        )
+
+        node_x_c, node_y_c = [], []
+        for node in G_conf.nodes():
+            x, y = pos_conf[node]
+            node_x_c.append(x)
+            node_y_c.append(y)
+
+        node_trace_c = go.Scatter(
+            x=node_x_c, y=node_y_c, mode='markers',
+            hoverinfo='none',
+            marker=dict(size=8, color='lightgreen', line_width=1),
+        )
+
+        fig_conf = go.Figure(data=[edge_trace_c, node_trace_c])
+        fig_conf.update_layout(
+            title="Konfigurační graf se stejnou stupňovou posloupností jako HVG",
+            showlegend=False, hovermode='closest',
+            margin=dict(b=20, l=5, r=5, t=40)
+        )
+        st.plotly_chart(fig_conf, use_container_width=True)
+
         # --- Metriky konfiguračního grafu ---
         n_nodes_conf = G_conf.number_of_nodes()
         n_edges_conf = G_conf.number_of_edges()
@@ -705,41 +741,6 @@ if st.session_state.show_hvg and st.session_state.data is not None:
                     "σ(HVG) > σ(conf) – skutečný HVG je **víc small-world** než jeho "
                     "degree-preserving null model."
                 )
-
-        # --- Vizualizace konfiguračního grafu ---
-        st.subheader("🕸️ Konfigurační graf (vizualizace)")
-        pos_conf = nx.spring_layout(G_conf, seed=42)
-        edge_x_c, edge_y_c = [], []
-        for u, v in G_conf.edges():
-            x0, y0 = pos_conf[u]
-            x1, y1 = pos_conf[v]
-            edge_x_c += [x0, x1, None]
-            edge_y_c += [y0, y1, None]
-
-        edge_trace_c = go.Scatter(
-            x=edge_x_c, y=edge_y_c, mode='lines',
-            line=dict(width=1, color='#aaa'), hoverinfo='none'
-        )
-
-        node_x_c, node_y_c = [], []
-        for node in G_conf.nodes():
-            x, y = pos_conf[node]
-            node_x_c.append(x)
-            node_y_c.append(y)
-
-        node_trace_c = go.Scatter(
-            x=node_x_c, y=node_y_c, mode='markers',
-            hoverinfo='none',
-            marker=dict(size=8, color='lightgreen', line_width=1),
-        )
-
-        fig_conf = go.Figure(data=[edge_trace_c, node_trace_c])
-        fig_conf.update_layout(
-            title="Konfigurační graf se stejnou stupňovou posloupností jako HVG",
-            showlegend=False, hovermode='closest',
-            margin=dict(b=20, l=5, r=5, t=40)
-        )
-        st.plotly_chart(fig_conf, use_container_width=True)
 
     st.markdown("---")
 
