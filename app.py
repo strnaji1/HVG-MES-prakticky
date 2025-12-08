@@ -1731,8 +1731,12 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             section_options_cmp = [
                 "📊 Metriky HVG",
+                "🔗 Propojení časová řada ↔ HVG",
+                "🧮 Lokální analýza úseku časové řady",
+                "🧩 Podgraf HVG",
                 "📉 Rozdělení stupňů",
                 "🎨 Arc Diagram HVG",
+                "🔁 Konfigurační graf (null model)",
                 "💾 Export HVG a metrik",
             ]
             selected_sections_cmp = st.multiselect(
@@ -1900,6 +1904,657 @@ else:  # "Porovnat dvě časové řady"
                             st.warning(msg2)
                         else:
                             st.info(msg2)
+
+            # =============================
+            # 🔗 Propojení časová řada ↔ HVG (oboje)
+            # =============================
+            if "🔗 Propojení časová řada ↔ HVG" in selected_sections_cmp:
+                st.markdown("### 🔗 Propojení časové řady a HVG (Série 1 & 2)")
+
+                tab1, tab2 = st.tabs(["Série 1", "Série 2"])
+
+                with tab1:
+                    if n1 > 0:
+                        idx1 = st.number_input(
+                            "Index pro zvýraznění (Série 1)",
+                            min_value=0, max_value=n1 - 1, value=0, step=1,
+                            key="cmp_idx1"
+                        )
+                        neighbors1 = list(G1.adj[idx1])
+                        st.markdown(
+                            f"- Vybraný vrchol: **{idx1}**, "
+                            f"stupeň: **{G1.degree(idx1)}**, "
+                            f"sousedé: **{neighbors1}**"
+                        )
+
+                        # časová řada s highlightem
+                        df_ts1 = pd.DataFrame({"index": np.arange(len(data1)), "value": data1})
+                        fig_ts1 = px.line(
+                            df_ts1, x="index", y="value", markers=True,
+                            title="Série 1 – časová řada (highlight)"
+                        )
+                        fig_ts1.update_traces(marker_size=6)
+                        fig_ts1.add_trace(go.Scatter(
+                            x=[idx1],
+                            y=[data1[idx1]],
+                            mode="markers",
+                            marker=dict(size=14, color="red"),
+                            name="Vybraný bod"
+                        ))
+                        if len(neighbors1) > 0:
+                            fig_ts1.add_trace(go.Scatter(
+                                x=neighbors1,
+                                y=[data1[i] for i in neighbors1],
+                                mode="markers",
+                                marker=dict(size=10, color="orange"),
+                                name="Sousedé"
+                            ))
+                        st.plotly_chart(fig_ts1, use_container_width=True)
+
+                        # HVG s highlightem
+                        pos1_h = nx.spring_layout(G1, seed=42)
+                        edge_x1h, edge_y1h = [], []
+                        for u, v in G1.edges():
+                            x0, y0 = pos1_h[u]
+                            x1_, y1_ = pos1_h[v]
+                            edge_x1h += [x0, x1_, None]
+                            edge_y1h += [y0, y1_, None]
+                        edge_trace1h = go.Scatter(
+                            x=edge_x1h, y=edge_y1h, mode="lines",
+                            line=dict(width=1, color="#aaa"),
+                            hoverinfo="none"
+                        )
+                        node_x1h, node_y1h = [], []
+                        for node in G1.nodes():
+                            x, y = pos1_h[node]
+                            node_x1h.append(x)
+                            node_y1h.append(y)
+                        node_trace1h = go.Scatter(
+                            x=node_x1h, y=node_y1h, mode="markers",
+                            marker=dict(size=10, color="skyblue"),
+                            hoverinfo="none"
+                        )
+
+                        hl_nodes1 = [idx1] + neighbors1
+                        hl_x1, hl_y1 = [], []
+                        for node in hl_nodes1:
+                            x, y = pos1_h[node]
+                            hl_x1.append(x)
+                            hl_y1.append(y)
+                        highlight1 = go.Scatter(
+                            x=hl_x1, y=hl_y1,
+                            mode="markers+text",
+                            text=[str(i) for i in hl_nodes1],
+                            textposition="top center",
+                            marker=dict(size=14, color="red"),
+                            hoverinfo="text",
+                            hovertext=[f"Vrchol: {i}" for i in hl_nodes1]
+                        )
+
+                        fig_h1 = go.Figure(data=[edge_trace1h, node_trace1h, highlight1])
+                        fig_h1.update_layout(
+                            title="HVG – Série 1 (highlight)",
+                            showlegend=False,
+                            hovermode="closest",
+                            margin=dict(b=20, l=5, r=5, t=40)
+                        )
+                        st.plotly_chart(fig_h1, use_container_width=True)
+
+                with tab2:
+                    if n2 > 0:
+                        idx2 = st.number_input(
+                            "Index pro zvýraznění (Série 2)",
+                            min_value=0, max_value=n2 - 1, value=0, step=1,
+                            key="cmp_idx2"
+                        )
+                        neighbors2 = list(G2.adj[idx2])
+                        st.markdown(
+                            f"- Vybraný vrchol: **{idx2}**, "
+                            f"stupeň: **{G2.degree(idx2)}**, "
+                            f"sousedé: **{neighbors2}**"
+                        )
+
+                        df_ts2 = pd.DataFrame({"index": np.arange(len(data2)), "value": data2})
+                        fig_ts2 = px.line(
+                            df_ts2, x="index", y="value", markers=True,
+                            title="Série 2 – časová řada (highlight)"
+                        )
+                        fig_ts2.update_traces(marker_size=6)
+                        fig_ts2.add_trace(go.Scatter(
+                            x=[idx2],
+                            y=[data2[idx2]],
+                            mode="markers",
+                            marker=dict(size=14, color="red"),
+                            name="Vybraný bod"
+                        ))
+                        if len(neighbors2) > 0:
+                            fig_ts2.add_trace(go.Scatter(
+                                x=neighbors2,
+                                y=[data2[i] for i in neighbors2],
+                                mode="markers",
+                                marker=dict(size=10, color="orange"),
+                                name="Sousedé"
+                            ))
+                        st.plotly_chart(fig_ts2, use_container_width=True)
+
+                        pos2_h = nx.spring_layout(G2, seed=42)
+                        edge_x2h, edge_y2h = [], []
+                        for u, v in G2.edges():
+                            x0, y0 = pos2_h[u]
+                            x2_, y2_ = pos2_h[v]
+                            edge_x2h += [x0, x2_, None]
+                            edge_y2h += [y0, y2_, None]
+                        edge_trace2h = go.Scatter(
+                            x=edge_x2h, y=edge_y2h, mode="lines",
+                            line=dict(width=1, color="#aaa"),
+                            hoverinfo="none"
+                        )
+                        node_x2h, node_y2h = [], []
+                        for node in G2.nodes():
+                            x, y = pos2_h[node]
+                            node_x2h.append(x)
+                            node_y2h.append(y)
+                        node_trace2h = go.Scatter(
+                            x=node_x2h, y=node_y2h, mode="markers",
+                            marker=dict(size=10, color="lightgreen"),
+                            hoverinfo="none"
+                        )
+
+                        hl_nodes2 = [idx2] + neighbors2
+                        hl_x2, hl_y2 = [], []
+                        for node in hl_nodes2:
+                            x, y = pos2_h[node]
+                            hl_x2.append(x)
+                            hl_y2.append(y)
+                        highlight2 = go.Scatter(
+                            x=hl_x2, y=hl_y2,
+                            mode="markers+text",
+                            text=[str(i) for i in hl_nodes2],
+                            textposition="top center",
+                            marker=dict(size=14, color="red"),
+                            hoverinfo="text",
+                            hovertext=[f"Vrchol: {i}" for i in hl_nodes2]
+                        )
+
+                        fig_h2 = go.Figure(data=[edge_trace2h, node_trace2h, highlight2])
+                        fig_h2.update_layout(
+                            title="HVG – Série 2 (highlight)",
+                            showlegend=False,
+                            hovermode="closest",
+                            margin=dict(b=20, l=5, r=5, t=40)
+                        )
+                        st.plotly_chart(fig_h2, use_container_width=True)
+
+            # =============================
+            # 🧮 Lokální analýza úseku časové řady (oboje)
+            # =============================
+            if "🧮 Lokální analýza úseku časové řady" in selected_sections_cmp:
+                st.markdown("### 🧮 Lokální analýza úseku časové řady (Série 1 & 2)")
+
+                col_loc1, col_loc2 = st.columns(2)
+
+                with col_loc1:
+                    st.markdown("**Série 1 – lokální úsek**")
+                    if len(data1) >= 2:
+                        i1_start, i1_end = st.slider(
+                            "Rozsah indexů (Série 1)",
+                            min_value=0,
+                            max_value=len(data1) - 1,
+                            value=(0, min(len(data1) - 1, max(1, len(data1)//5))),
+                            key="loc_range_1"
+                        )
+                        if i1_start > i1_end:
+                            i1_start, i1_end = i1_end, i1_start
+
+                        seg1 = data1[i1_start:i1_end + 1]
+                        st.write(
+                            f"- Délka úseku: **{len(seg1)}**, "
+                            f"rozsah indexů: **[{i1_start}, {i1_end}]**"
+                        )
+                        if len(seg1) > 0:
+                            ent1 = shannon_entropy(seg1, bins="auto")
+                            st.write(
+                                f"- Průměr (lokální): **{seg1.mean():.3f}**  \n"
+                                f"- Rozptyl (lokální): **{seg1.var():.3f}**  \n"
+                                f"- Min: **{seg1.min():.3f}**, Max: **{seg1.max():.3f}**  \n"
+                                f"- Shannonova entropie: **{ent1:.3f}**"
+                            )
+                            if len(seg1) >= 2:
+                                G1_seg = build_hvg(seg1)
+                                n1s = G1_seg.number_of_nodes()
+                                m1s = G1_seg.number_of_edges()
+                                degs1s = [d for _, d in G1_seg.degree()]
+                                avg_deg1s = float(np.mean(degs1s)) if len(degs1s) > 0 else 0.0
+                                try:
+                                    C1s = nx.average_clustering(G1_seg)
+                                except Exception:
+                                    C1s = float("nan")
+                                is_conn1s = nx.is_connected(G1_seg) if n1s > 0 else False
+                                L1s, diam1s = None, None
+                                if is_conn1s and n1s > 1:
+                                    try:
+                                        L1s = nx.average_shortest_path_length(G1_seg)
+                                    except Exception:
+                                        L1s = None
+                                    try:
+                                        diam1s = nx.diameter(G1_seg)
+                                    except Exception:
+                                        diam1s = None
+                                st.markdown("**Lokální HVG – Série 1**")
+                                st.write(f"- Počet vrcholů: **{n1s}**, počet hran: **{m1s}**, průměrný stupeň: **{avg_deg1s:.3f}**")
+                                st.write(f"- Clustering: **{C1s:.3f}**")
+                                if L1s is not None:
+                                    st.write(f"- Průměrná délka cesty: **{L1s:.3f}**")
+                                if diam1s is not None:
+                                    st.write(f"- Průměr grafu: **{diam1s}**")
+
+                with col_loc2:
+                    st.markdown("**Série 2 – lokální úsek**")
+                    if len(data2) >= 2:
+                        i2_start, i2_end = st.slider(
+                            "Rozsah indexů (Série 2)",
+                            min_value=0,
+                            max_value=len(data2) - 1,
+                            value=(0, min(len(data2) - 1, max(1, len(data2)//5))),
+                            key="loc_range_2"
+                        )
+                        if i2_start > i2_end:
+                            i2_start, i2_end = i2_end, i2_start
+
+                        seg2 = data2[i2_start:i2_end + 1]
+                        st.write(
+                            f"- Délka úseku: **{len(seg2)}**, "
+                            f"rozsah indexů: **[{i2_start}, {i2_end}]**"
+                        )
+                        if len(seg2) > 0:
+                            ent2 = shannon_entropy(seg2, bins="auto")
+                            st.write(
+                                f"- Průměr (lokální): **{seg2.mean():.3f}**  \n"
+                                f"- Rozptyl (lokální): **{seg2.var():.3f}**  \n"
+                                f"- Min: **{seg2.min():.3f}**, Max: **{seg2.max():.3f}**  \n"
+                                f"- Shannonova entropie: **{ent2:.3f}**"
+                            )
+                            if len(seg2) >= 2:
+                                G2_seg = build_hvg(seg2)
+                                n2s = G2_seg.number_of_nodes()
+                                m2s = G2_seg.number_of_edges()
+                                degs2s = [d for _, d in G2_seg.degree()]
+                                avg_deg2s = float(np.mean(degs2s)) if len(degs2s) > 0 else 0.0
+                                try:
+                                    C2s = nx.average_clustering(G2_seg)
+                                except Exception:
+                                    C2s = float("nan")
+                                is_conn2s = nx.is_connected(G2_seg) if n2s > 0 else False
+                                L2s, diam2s = None, None
+                                if is_conn2s and n2s > 1:
+                                    try:
+                                        L2s = nx.average_shortest_path_length(G2_seg)
+                                    except Exception:
+                                        L2s = None
+                                    try:
+                                        diam2s = nx.diameter(G2_seg)
+                                    except Exception:
+                                        diam2s = None
+                                st.markdown("**Lokální HVG – Série 2**")
+                                st.write(f"- Počet vrcholů: **{n2s}**, počet hran: **{m2s}**, průměrný stupeň: **{avg_deg2s:.3f}**")
+                                st.write(f"- Clustering: **{C2s:.3f}**")
+                                if L2s is not None:
+                                    st.write(f"- Průměrná délka cesty: **{L2s:.3f}**")
+                                if diam2s is not None:
+                                    st.write(f"- Průměr grafu: **{diam2s}**")
+
+            # =============================
+            # 🧩 Podgraf HVG pro obě série
+            # =============================
+            if "🧩 Podgraf HVG" in selected_sections_cmp:
+                st.markdown("### 🧩 Podgraf HVG pro obě série")
+
+                sub_nodes_text = st.text_input(
+                    "Seznam vrcholů pro podgraf (indexy oddělené čárkou nebo mezerami) – použijí se na obě HVG",
+                    value="0, 1, 2",
+                    key="sub_nodes_cmp"
+                )
+
+                sub_nodes = []
+                for token in re.split(r"[,\s;]+", sub_nodes_text):
+                    token = token.strip()
+                    if token == "":
+                        continue
+                    try:
+                        idx = int(token)
+                        if idx >= 0:
+                            sub_nodes.append(idx)
+                    except ValueError:
+                        continue
+                sub_nodes = sorted(set(sub_nodes))
+
+                col_sub1, col_sub2 = st.columns(2)
+
+                with col_sub1:
+                    st.markdown("**Podgraf – Série 1**")
+                    valid1 = [i for i in sub_nodes if i < n1]
+                    if len(valid1) == 0:
+                        st.info("Žádný zadaný index nepadá do rozsahu vrcholů Série 1.")
+                    else:
+                        G1_sub = G1.subgraph(valid1).copy()
+                        st.write(f"- Vrcholy: **{G1_sub.number_of_nodes()}**, hrany: **{G1_sub.number_of_edges()}**")
+                        degs1_sub = [d for _, d in G1_sub.degree()]
+                        avg_deg1_sub = float(np.mean(degs1_sub)) if len(degs1_sub) > 0 else 0.0
+                        try:
+                            C1_sub = nx.average_clustering(G1_sub)
+                        except Exception:
+                            C1_sub = float("nan")
+                        is_conn1_sub = nx.is_connected(G1_sub) if G1_sub.number_of_nodes() > 0 else False
+                        L1_sub, diam1_sub = None, None
+                        if is_conn1_sub and G1_sub.number_of_nodes() > 1:
+                            try:
+                                L1_sub = nx.average_shortest_path_length(G1_sub)
+                            except Exception:
+                                L1_sub = None
+                            try:
+                                diam1_sub = nx.diameter(G1_sub)
+                            except Exception:
+                                diam1_sub = None
+                        st.write(f"- Průměrný stupeň: **{avg_deg1_sub:.3f}**")
+                        st.write(f"- Clustering: **{C1_sub:.3f}**")
+                        if L1_sub is not None:
+                            st.write(f"- Průměrná délka cesty: **{L1_sub:.3f}**")
+                        if diam1_sub is not None:
+                            st.write(f"- Průměr grafu: **{diam1_sub}**")
+
+                        # vizualizace s původním layoutem pos1
+                        edge_x1_sub, edge_y1_sub = [], []
+                        for u, v in G1_sub.edges():
+                            x0, y0 = pos1[u]
+                            x1_, y1_ = pos1[v]
+                            edge_x1_sub += [x0, x1_, None]
+                            edge_y1_sub += [y0, y1_, None]
+                        node_x1_sub, node_y1_sub = [], []
+                        for node in G1_sub.nodes():
+                            x, y = pos1[node]
+                            node_x1_sub.append(x)
+                            node_y1_sub.append(y)
+                        edge_trace1_sub = go.Scatter(
+                            x=edge_x1_sub, y=edge_y1_sub,
+                            mode="lines",
+                            line=dict(width=1, color="#888"),
+                            hoverinfo="none"
+                        )
+                        node_trace1_sub = go.Scatter(
+                            x=node_x1_sub, y=node_y1_sub,
+                            mode="markers+text",
+                            text=[str(n) for n in G1_sub.nodes()],
+                            textposition="bottom center",
+                            marker=dict(size=10, color="lightcoral", line_width=1),
+                            hoverinfo="text",
+                            hovertext=[f"Vrchol: {n}" for n in G1_sub.nodes()]
+                        )
+                        fig1_sub = go.Figure(data=[edge_trace1_sub, node_trace1_sub])
+                        fig1_sub.update_layout(
+                            title="Podgraf HVG – Série 1",
+                            showlegend=False, hovermode="closest",
+                            margin=dict(b=20, l=5, r=5, t=40)
+                        )
+                        st.plotly_chart(fig1_sub, use_container_width=True)
+
+                with col_sub2:
+                    st.markdown("**Podgraf – Série 2**")
+                    valid2 = [i for i in sub_nodes if i < n2]
+                    if len(valid2) == 0:
+                        st.info("Žádný zadaný index nepadá do rozsahu vrcholů Série 2.")
+                    else:
+                        G2_sub = G2.subgraph(valid2).copy()
+                        st.write(f"- Vrcholy: **{G2_sub.number_of_nodes()}**, hrany: **{G2_sub.number_of_edges()}**")
+                        degs2_sub = [d for _, d in G2_sub.degree()]
+                        avg_deg2_sub = float(np.mean(degs2_sub)) if len(degs2_sub) > 0 else 0.0
+                        try:
+                            C2_sub = nx.average_clustering(G2_sub)
+                        except Exception:
+                            C2_sub = float("nan")
+                        is_conn2_sub = nx.is_connected(G2_sub) if G2_sub.number_of_nodes() > 0 else False
+                        L2_sub, diam2_sub = None, None
+                        if is_conn2_sub and G2_sub.number_of_nodes() > 1:
+                            try:
+                                L2_sub = nx.average_shortest_path_length(G2_sub)
+                            except Exception:
+                                L2_sub = None
+                            try:
+                                diam2_sub = nx.diameter(G2_sub)
+                            except Exception:
+                                diam2_sub = None
+                        st.write(f"- Průměrný stupeň: **{avg_deg2_sub:.3f}**")
+                        st.write(f"- Clustering: **{C2_sub:.3f}**")
+                        if L2_sub is not None:
+                            st.write(f"- Průměrná délka cesty: **{L2_sub:.3f}**")
+                        if diam2_sub is not None:
+                            st.write(f"- Průměr grafu: **{diam2_sub}**")
+
+                        edge_x2_sub, edge_y2_sub = [], []
+                        for u, v in G2_sub.edges():
+                            x0, y0 = pos2[u]
+                            x2_, y2_ = pos2[v]
+                            edge_x2_sub += [x0, x2_, None]
+                            edge_y2_sub += [y0, y2_, None]
+                        node_x2_sub, node_y2_sub = [], []
+                        for node in G2_sub.nodes():
+                            x, y = pos2[node]
+                            node_x2_sub.append(x)
+                            node_y2_sub.append(y)
+                        edge_trace2_sub = go.Scatter(
+                            x=edge_x2_sub, y=edge_y2_sub,
+                            mode="lines",
+                            line=dict(width=1, color="#888"),
+                            hoverinfo="none"
+                        )
+                        node_trace2_sub = go.Scatter(
+                            x=node_x2_sub, y=node_y2_sub,
+                            mode="markers+text",
+                            text=[str(n) for n in G2_sub.nodes()],
+                            textposition="bottom center",
+                            marker=dict(size=10, color="lightcoral", line_width=1),
+                            hoverinfo="text",
+                            hovertext=[f"Vrchol: {n}" for n in G2_sub.nodes()]
+                        )
+                        fig2_sub = go.Figure(data=[edge_trace2_sub, node_trace2_sub])
+                        fig2_sub.update_layout(
+                            title="Podgraf HVG – Série 2",
+                            showlegend=False, hovermode="closest",
+                            margin=dict(b=20, l=5, r=5, t=40)
+                        )
+                        st.plotly_chart(fig2_sub, use_container_width=True)
+
+            # =============================
+            # 🔁 Konfigurační graf (null model) pro obě série
+            # =============================
+            if "🔁 Konfigurační graf (null model)" in selected_sections_cmp:
+                st.markdown("### 🔁 Konfigurační graf (null model) pro obě série")
+
+                # Série 1
+                G1_conf = build_configuration_graph_from_hvg(G1, seed=42)
+                n1c = G1_conf.number_of_nodes()
+                m1c = G1_conf.number_of_edges()
+                degs1c = [d for _, d in G1_conf.degree()]
+                avg_deg1c = float(np.mean(degs1c)) if len(degs1c) > 0 else 0.0
+                try:
+                    C1c = nx.average_clustering(G1_conf)
+                except Exception:
+                    C1c = float("nan")
+                is_conn1c = nx.is_connected(G1_conf) if n1c > 0 else False
+                L1c, diam1c = None, None
+                if is_conn1c and n1c > 1:
+                    try:
+                        L1c = nx.average_shortest_path_length(G1_conf)
+                    except Exception:
+                        L1c = None
+                    try:
+                        diam1c = nx.diameter(G1_conf)
+                    except Exception:
+                        diam1c = None
+                L_rand1c, C_rand1c = None, None
+                if n1c > 1 and avg_deg1c > 1:
+                    try:
+                        L_rand1c = np.log(n1c) / np.log(avg_deg1c)
+                        C_rand1c = avg_deg1c / n1c
+                    except Exception:
+                        L_rand1c, C_rand1c = None, None
+                sigma1c = None
+                if (
+                    C1c is not None and L1c is not None and
+                    L_rand1c is not None and C_rand1c not in (None, 0)
+                ):
+                    try:
+                        sigma1c = (C1c / C_rand1c) / (L1c / L_rand1c)
+                    except Exception:
+                        sigma1c = None
+
+                # Série 2
+                G2_conf = build_configuration_graph_from_hvg(G2, seed=42)
+                n2c = G2_conf.number_of_nodes()
+                m2c = G2_conf.number_of_edges()
+                degs2c = [d for _, d in G2_conf.degree()]
+                avg_deg2c = float(np.mean(degs2c)) if len(degs2c) > 0 else 0.0
+                try:
+                    C2c = nx.average_clustering(G2_conf)
+                except Exception:
+                    C2c = float("nan")
+                is_conn2c = nx.is_connected(G2_conf) if n2c > 0 else False
+                L2c, diam2c = None, None
+                if is_conn2c and n2c > 1:
+                    try:
+                        L2c = nx.average_shortest_path_length(G2_conf)
+                    except Exception:
+                        L2c = None
+                    try:
+                        diam2c = nx.diameter(G2_conf)
+                    except Exception:
+                        diam2c = None
+                L_rand2c, C_rand2c = None, None
+                if n2c > 1 and avg_deg2c > 1:
+                    try:
+                        L_rand2c = np.log(n2c) / np.log(avg_deg2c)
+                        C_rand2c = avg_deg2c / n2c
+                    except Exception:
+                        L_rand2c, C_rand2c = None, None
+                sigma2c = None
+                if (
+                    C2c is not None and L2c is not None and
+                    L_rand2c is not None and C_rand2c not in (None, 0)
+                ):
+                    try:
+                        sigma2c = (C2c / C_rand2c) / (L2c / L_rand2c)
+                    except Exception:
+                        sigma2c = None
+
+                col_conf1, col_conf2 = st.columns(2)
+                with col_conf1:
+                    st.markdown("**Konfigurační graf – Série 1**")
+                    st.write(f"- Počet vrcholů: **{n1c}**")
+                    st.write(f"- Počet hran: **{m1c}**")
+                    st.write(f"- Průměrný stupeň: **{avg_deg1c:.3f}**")
+                    if L1c is not None:
+                        st.write(f"- Průměrná délka cesty L_conf: **{L1c:.3f}**")
+                    else:
+                        st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
+                    if diam1c is not None:
+                        st.write(f"- Průměr grafu (diameter_conf): **{diam1c}**")
+                    else:
+                        st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
+                    st.write(f"- Clustering C_conf: **{C1c:.3f}**")
+                    if L_rand1c is not None and C_rand1c is not None and C_rand1c != 0:
+                        st.write(
+                            "- Náhodný graf (odhad):  \n"
+                            f"  - L_rand_conf ≈ **{L_rand1c:.3f}**  \n"
+                            f"  - C_rand_conf ≈ **{C_rand1c:.5f}**"
+                        )
+                    if sigma1c is not None and not np.isnan(sigma1c):
+                        st.write(f"- Small-world index σ_conf: **{sigma1c:.2f}**")
+
+                    pos1c = nx.spring_layout(G1_conf, seed=42)
+                    edge_x1c, edge_y1c = [], []
+                    for u, v in G1_conf.edges():
+                        x0, y0 = pos1c[u]
+                        x1_, y1_ = pos1c[v]
+                        edge_x1c += [x0, x1_, None]
+                        edge_y1c += [y0, y1_, None]
+                    edge_trace1c = go.Scatter(
+                        x=edge_x1c, y=edge_y1c,
+                        mode="lines",
+                        line=dict(width=1, color="#aaa"),
+                        hoverinfo="none"
+                    )
+                    node_x1c, node_y1c = [], []
+                    for node in G1_conf.nodes():
+                        x, y = pos1c[node]
+                        node_x1c.append(x)
+                        node_y1c.append(y)
+                    node_trace1c = go.Scatter(
+                        x=node_x1c, y=node_y1c,
+                        mode="markers",
+                        marker=dict(size=8, color="lightgreen"),
+                        hoverinfo="none"
+                    )
+                    fig_conf1 = go.Figure(data=[edge_trace1c, node_trace1c])
+                    fig_conf1.update_layout(
+                        title="Konfigurační graf – Série 1",
+                        showlegend=False, hovermode="closest",
+                        margin=dict(b=20, l=5, r=5, t=40)
+                    )
+                    st.plotly_chart(fig_conf1, use_container_width=True)
+
+                with col_conf2:
+                    st.markdown("**Konfigurační graf – Série 2**")
+                    st.write(f"- Počet vrcholů: **{n2c}**")
+                    st.write(f"- Počet hran: **{m2c}**")
+                    st.write(f"- Průměrný stupeň: **{avg_deg2c:.3f}**")
+                    if L2c is not None:
+                        st.write(f"- Průměrná délka cesty L_conf: **{L2c:.3f}**")
+                    else:
+                        st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
+                    if diam2c is not None:
+                        st.write(f"- Průměr grafu (diameter_conf): **{diam2c}**")
+                    else:
+                        st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
+                    st.write(f"- Clustering C_conf: **{C2c:.3f}**")
+                    if L_rand2c is not None and C_rand2c is not None and C_rand2c != 0:
+                        st.write(
+                            "- Náhodný graf (odhad):  \n"
+                            f"  - L_rand_conf ≈ **{L_rand2c:.3f}**  \n"
+                            f"  - C_rand_conf ≈ **{C_rand2c:.5f}**"
+                        )
+                    if sigma2c is not None and not np.isnan(sigma2c):
+                        st.write(f"- Small-world index σ_conf: **{sigma2c:.2f}**")
+
+                    pos2c = nx.spring_layout(G2_conf, seed=42)
+                    edge_x2c, edge_y2c = [], []
+                    for u, v in G2_conf.edges():
+                        x0, y0 = pos2c[u]
+                        x2_, y2_ = pos2c[v]
+                        edge_x2c += [x0, x2_, None]
+                        edge_y2c += [y0, y2_, None]
+                    edge_trace2c = go.Scatter(
+                        x=edge_x2c, y=edge_y2c,
+                        mode="lines",
+                        line=dict(width=1, color="#aaa"),
+                        hoverinfo="none"
+                    )
+                    node_x2c, node_y2c = [], []
+                    for node in G2_conf.nodes():
+                        x, y = pos2c[node]
+                        node_x2c.append(x)
+                        node_y2c.append(y)
+                    node_trace2c = go.Scatter(
+                        x=node_x2c, y=node_y2c,
+                        mode="markers",
+                        marker=dict(size=8, color="lightgreen"),
+                        hoverinfo="none"
+                    )
+                    fig_conf2 = go.Figure(data=[edge_trace2c, node_trace2c])
+                    fig_conf2.update_layout(
+                        title="Konfigurační graf – Série 2",
+                        showlegend=False, hovermode="closest",
+                        margin=dict(b=20, l=5, r=5, t=40)
+                    )
+                    st.plotly_chart(fig_conf2, use_container_width=True)
 
             # =============================
             # 📉 Porovnání stupňového rozdělení
@@ -2097,3 +2752,4 @@ else:  # "Porovnat dvě časové řady"
                         file_name="hvg_series2_metrics.csv",
                         mime="text/csv"
                     )
+
