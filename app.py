@@ -1,207 +1,29 @@
+# app.py – část 1/2
+
 import streamlit as st
 import numpy as np
 import pandas as pd
 import networkx as nx
 import plotly.express as px
 import plotly.graph_objects as go
-import re  # <- kvůli parsování textových vstupů
+import re  # kvůli parsování textových vstupů
 
-# Zkusíme importovat powerlaw – pokud není, jen nastavíme flag
-try:
-    import powerlaw
-    HAS_POWERLAW = True
-except ImportError:
-    HAS_POWERLAW = False
-
-
-# =========================
-#  Pomocné funkce – generátory
-# =========================
-
-def generate_logistic_map(length, r=3.9, x0=0.2, burn=500):
-    """
-    Logistická mapa: x_{n+1} = r * x_n * (1 - x_n)
-    Vrací posledních `length` hodnot po zahozní burn-in části.
-    """
-    N = length + burn
-    x = np.empty(N)
-    x[0] = x0
-    for i in range(1, N):
-        x[i] = r * x[i-1] * (1 - x[i-1])
-    return x[burn:]
-
-
-def generate_henon_map(length, a=1.4, b=0.3, x0=0.1, y0=0.0, burn=200):
-    """
-    Henonova mapa:
-    x_{n+1} = 1 - a x_n^2 + y_n
-    y_{n+1} = b x_n
-    Vrací x-sérii po burn-in.
-    """
-    N = length + burn
-    xs = np.empty(N)
-    ys = np.empty(N)
-    xs[0] = x0
-    ys[0] = y0
-    for n in range(1, N):
-        xs[n] = 1 - a * xs[n-1]**2 + ys[n-1]
-        ys[n] = b * xs[n-1]
-    return xs[burn:]
-
-
-def generate_lorenz_x(length, dt=0.01,
-                      sigma=10.0, rho=28.0, beta=8/3,
-                      x0=1.0, y0=1.0, z0=1.0, burn=1000):
-    """
-    Lorenzův systém integrovaný jednoduchým Eulerem.
-    Vrací x-sérii po burn-in.
-    """
-    N = length + burn
-    xs = np.empty(N)
-    ys = np.empty(N)
-    zs = np.empty(N)
-    xs[0], ys[0], zs[0] = x0, y0, z0
-
-    for i in range(1, N):
-        dx = sigma * (ys[i-1] - xs[i-1])
-        dy = xs[i-1] * (rho - zs[i-1]) - ys[i-1]
-        dz = xs[i-1] * ys[i-1] - beta * zs[i-1]
-
-        xs[i] = xs[i-1] + dx * dt
-        ys[i] = ys[i-1] + dy * dt
-        zs[i] = zs[i-1] + dz * dt
-
-    return xs[burn:]
-
-
-def generate_pink_noise(length):
-    """
-    1/f šum (pink noise) přes frekvenční doménu.
-    Vrací normalizovanou sérii délky `length`.
-    """
-    # nejbližší mocnina 2 >= length kvůli FFT
-    N = int(2 ** np.ceil(np.log2(length)))
-    freqs = np.fft.rfftfreq(N)
-    phases = np.random.uniform(0, 2 * np.pi, len(freqs))
-
-    # amplituda ~ 1/sqrt(f), f=0 nastavíme na 0
-    amplitude = np.where(freqs == 0, 0.0, 1.0 / np.sqrt(freqs))
-    spectrum = amplitude * (np.cos(phases) + 1j * np.sin(phases))
-
-    signal = np.fft.irfft(spectrum, n=N)
-    signal = signal[:length]
-
-    # normalizace
-    signal = (signal - signal.mean()) / signal.std()
-    return signal
-
-
-# =========================
-#  Další pomocné funkce
-# =========================
-
-def build_hvg(data):
-    """
-    Vytvoří Horizontal Visibility Graph (HVG) z časové řady `data`.
-    Vrcholy jsou indexy časové řady.
-    """
-    G = nx.Graph()
-    n = len(data)
-    G.add_nodes_from(range(n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            if all(data[k] < data[i] and data[k] < data[j] for k in range(i + 1, j)):
-                G.add_edge(i, j)
-    return G
-
-
-def build_configuration_graph_from_hvg(G, seed=42):
-    """
-    Vytvoří jednoduchý konfigurační graf (null model)
-    se stejnou stupňovou posloupností jako HVG graf G.
-    """
-    degrees = [d for _, d in G.degree()]
-    H_multi = nx.configuration_model(degrees, seed=seed)
-    H = nx.Graph(H_multi)
-    H.remove_edges_from(nx.selfloop_edges(H))
-    return H
-
-
-def shannon_entropy(x, bins="auto"):
-    """
-    Jednoduchý odhad Shannonovy entropie z histogramu.
-    """
-    if len(x) == 0:
-        return np.nan
-    hist, _ = np.histogram(x, bins=bins, density=True)
-    hist = hist[hist > 0]
-    if len(hist) == 0:
-        return np.nan
-    return -np.sum(hist * np.log2(hist))
-
-
-# =========================
-#  Small-world analyzer třída
-# =========================
-
-class SmallWorldAnalyzer:
-    """
-    Pomocná třída pro výpočet a interpretaci small-world indexu σ.
-    Teoretická hranice: σ > 1 => small-world.
-    """
-    def __init__(self, C, L, C_rand, L_rand):
-        self.C = C
-        self.L = L
-        self.C_rand = C_rand
-        self.L_rand = L_rand
-        self.sigma = self._compute_sigma()
-
-    def _compute_sigma(self):
-        if (
-            self.C is None or self.L is None or
-            self.C_rand in (None, 0) or
-            self.L_rand is None
-        ):
-            return None
-        try:
-            return (self.C / self.C_rand) / (self.L / self.L_rand)
-        except Exception:
-            return None
-
-    def interpretation(self, atol=0.05):
-        """
-        Vrátí (typ, zpráva) podle hodnoty σ:
-        - 'success'  -> small-world
-        - 'info'     -> podobné náhodnému grafu (σ ≈ 1)
-        - 'warning'  -> není small-world
-        """
-        if self.sigma is None or np.isnan(self.sigma):
-            return (
-                "info",
-                "Small-world index σ nelze spolehlivě spočítat "
-                "(chybí některá z metrik nebo došlo k numerické chybě)."
-            )
-
-        s = self.sigma
-        if s > 1 + atol:
-            return (
-                "success",
-                "Síť má **small-world vlastnosti** "
-                "(σ > 1 – vyšší clustering než náhodný graf při podobné délce cest)."
-            )
-        elif abs(s - 1.0) <= atol:
-            return (
-                "info",
-                "Síť je **velmi podobná náhodnému grafu** "
-                "(σ ≈ 1 – žádné výrazné small-world chování)."
-            )
-        else:
-            return (
-                "warning",
-                "Síť **pravděpodobně není small-world** "
-                "(σ < 1 – kombinace clusteringu a délky cest neodpovídá small-world síti)."
-            )
-
+# naše služby / třídy
+from services.generators import (
+    generate_logistic_map,
+    generate_henon_map,
+    generate_lorenz_x,
+    generate_pink_noise,
+)
+from services.hvg_graph import (
+    build_hvg,
+    build_configuration_graph_from_hvg,
+)
+from services.analysis import (
+    shannon_entropy,
+    SmallWorldAnalyzer,
+    HAS_POWERLAW,
+)
 
 # =========================
 #  Inicializace session state
@@ -222,7 +44,7 @@ st.set_page_config(page_title="HVG Vizualizátor", layout="wide")
 #  Hlavička
 # =========================
 
-st.title("📊 HVG Vizualizátor")
+st.title("HVG Vizualizátor")
 st.markdown("**Interaktivní vizualizace časových řad a jejich Horizontal Visibility Graphů (HVG)**")
 
 # =========================
@@ -365,7 +187,7 @@ if analysis_mode == "Časová řada → HVG":
 
     if st.session_state.data is not None:
         arr = st.session_state.data
-        st.subheader("📈 Vaše časová řada")
+        st.subheader("Vaše časová řada")
 
         df_ts = pd.DataFrame({"index": np.arange(len(arr)), "value": arr})
         fig_ts = px.line(
@@ -412,15 +234,15 @@ if analysis_mode == "Časová řada → HVG":
         # Tlačítka vedle sebe (toggle)
         c1, c2, c3 = st.columns(3)
         with c1:
-            if st.button("🕸️ Vygenerovat HVG"):
+            if st.button("Vygenerovat HVG"):
                 st.session_state.show_hvg = True
         with c2:
-            if st.button("🔗 HVG linky (přímé)"):
+            if st.button("HVG linky (přímé)"):
                 st.session_state.show_direct = not st.session_state.show_direct
                 if st.session_state.show_direct:
                     st.session_state.show_horiz = False
         with c3:
-            if st.button("🔗 HVG linky (vodorovné)"):
+            if st.button("HVG linky (vodorovné)"):
                 st.session_state.show_horiz = not st.session_state.show_horiz
                 if st.session_state.show_horiz:
                     st.session_state.show_direct = False
@@ -433,27 +255,27 @@ if analysis_mode == "Časová řada → HVG":
         arr = st.session_state.data
         G = build_hvg(arr)
 
-        st.subheader("🕸️ Interaktivní vizualizace HVG")
+        st.subheader("Interaktivní vizualizace HVG")
 
         # ---- Přehledné přepínání sekcí pod HVG ----
         section_options = [
-            "📊 Metriky HVG",
-            "🔗 Propojení časová řada ↔ HVG",
-            "🧮 Lokální analýza úseku časové řady",
-            "🧩 Podgraf HVG",
-            "📉 Rozdělení stupňů + power-law",
-            "🎨 Arc Diagram HVG",
-            "🔁 Konfigurační graf (null model)",
-            "💾 Export HVG a metrik",
+            "Metriky HVG",
+            "Propojení časová řada ↔ HVG",
+            "Lokální analýza úseku časové řady",
+            "Podgraf HVG",
+            "Rozdělení stupňů + power-law",
+            "Arc Diagram HVG",
+            "Konfigurační graf (null model)",
+            "Export HVG a metrik",
         ]
         selected_sections = st.multiselect(
             "Co chceš pod HVG zobrazit?",
             options=section_options,
             default=[
-                "📊 Metriky HVG",
-                "📉 Rozdělení stupňů + power-law",
-                "🎨 Arc Diagram HVG",
-                "💾 Export HVG a metrik",
+                "Metriky HVG",
+                "Rozdělení stupňů + power-law",
+                "Arc Diagram HVG",
+                "Export HVG a metrik",
             ]
         )
 
@@ -592,8 +414,8 @@ if analysis_mode == "Časová řada → HVG":
         neighbors = []
         selected_index = 0
 
-        if "🔗 Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
-            st.subheader("🔗 Propojení časové řady a HVG")
+        if "Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
+            st.subheader("Propojení časové řady a HVG")
 
             selected_index = st.number_input(
                 "Index vrcholu/časového bodu pro zvýraznění",
@@ -650,7 +472,7 @@ if analysis_mode == "Časová řada → HVG":
         st.plotly_chart(fig_hvg, use_container_width=True)
 
         # ====== Metriky HVG ======
-        if "📊 Metriky HVG" in selected_sections:
+        if "Metriky HVG" in selected_sections:
             col_stats1, col_stats2 = st.columns(2)
             with col_stats1:
                 st.markdown("**Základní metriky HVG**")
@@ -706,8 +528,8 @@ if analysis_mode == "Časová řada → HVG":
         st.markdown("---")
 
         # ====== Zvýraznění v časové řadě (jen pokud je sekce propojení aktivní) ======
-        if "🔗 Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
-            st.subheader("📍 Časová řada se zvýrazněným vrcholem a sousedy")
+        if "Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
+            st.subheader("Časová řada se zvýrazněným vrcholem a sousedy")
             df_ts2 = pd.DataFrame({"index": np.arange(len(arr)), "value": arr})
             fig_ts2 = px.line(
                 df_ts2, x="index", y="value", markers=True,
@@ -744,8 +566,8 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         #  Konfigurační graf (null model)
         # =========================
-        if "🔁 Konfigurační graf (null model)" in selected_sections:
-            st.markdown("### 🔁 Konfigurační graf (null model)")
+        if "Konfigurační graf (null model)" in selected_sections:
+            st.markdown("### Konfigurační graf (null model)")
 
             G_conf = build_configuration_graph_from_hvg(G, seed=42)
 
@@ -839,7 +661,7 @@ if analysis_mode == "Časová řada → HVG":
                     )
 
             # --- Porovnání HVG vs. konfigurační graf ---
-            st.markdown("**📊 Porovnání HVG vs. konfigurační graf (null model)**")
+            st.markdown("**Porovnání HVG vs. konfigurační graf (null model)**")
 
             if not np.isnan(C) and not np.isnan(C_conf):
                 st.write(f"- Clustering HVG: **{C:.3f}**, konfigurační graf C_conf: **{C_conf:.3f}**")
@@ -869,7 +691,7 @@ if analysis_mode == "Časová řada → HVG":
                     )
 
             # --- Vizualizace konfiguračního grafu ---
-            st.subheader("🕸️ Konfigurační graf (vizualizace)")
+            st.subheader("Konfigurační graf (vizualizace)")
             pos_conf = nx.spring_layout(G_conf, seed=42)
             edge_x_c, edge_y_c = [], []
             for u, v in G_conf.edges():
@@ -906,8 +728,8 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         #  „Kalkulačka“ – lokální analýza úseku časové řady
         # =========================
-        if "🧮 Lokální analýza úseku časové řady" in selected_sections:
-            st.subheader("🧮 Lokální analýza úseku časové řady")
+        if "Lokální analýza úseku časové řady" in selected_sections:
+            st.subheader("Lokální analýza úseku časové řady")
 
             if len(arr) >= 2:
                 i_start, i_end = st.slider(
@@ -973,8 +795,8 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         #  Výběr podgrafu z HVG
         # =========================
-        if "🧩 Podgraf HVG" in selected_sections:
-            st.subheader("🧩 Podgraf HVG podle vybraných vrcholů")
+        if "Podgraf HVG" in selected_sections:
+            st.subheader("Podgraf HVG podle vybraných vrcholů")
 
             sub_nodes_text = st.text_input(
                 "Seznam vrcholů pro podgraf (indexy oddělené čárkou nebo mezerami)",
@@ -1069,7 +891,7 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         #  Histogram + power-law
         # =========================
-        if "📉 Rozdělení stupňů + power-law" in selected_sections:
+        if "Rozdělení stupňů + power-law" in selected_sections:
             degs = degrees
             df_deg = pd.DataFrame({"degree": degs})
             fig_hist = px.histogram(
@@ -1089,7 +911,7 @@ if analysis_mode == "Časová řada → HVG":
                 "pk": pk
             })
 
-            st.subheader("📉 Power-law (log–log) graf rozdělení stupňů")
+            st.subheader("Power-law (log–log) graf rozdělení stupňů")
 
             fig_power = px.scatter(
                 df_power,
@@ -1120,6 +942,8 @@ if analysis_mode == "Časová řada → HVG":
                         st.info("Graf má příliš málo vrcholů pro smysluplný power-law fit.")
                     else:
                         try:
+                            import powerlaw  # jistota, že je v namespace
+
                             fit = powerlaw.Fit(degs_for_fit, discrete=True, verbose=False)
                             alpha = fit.power_law.alpha
                             xmin = fit.power_law.xmin
@@ -1172,7 +996,7 @@ if analysis_mode == "Časová řada → HVG":
                                 # přenormování tak, aby se kryla v k_min
                                 ccdf_theory *= ccdf_emp[0] / ccdf_theory[0]
 
-                                st.subheader("📈 CCDF power-law graf (log–log)")
+                                st.subheader("CCDF power-law graf (log–log)")
 
                                 fig_ccdf = go.Figure()
 
@@ -1220,8 +1044,8 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         #  Arc diagram HVG
         # =========================
-        if "🎨 Arc Diagram HVG" in selected_sections:
-            st.subheader("🎨 Arc Diagram HVG")
+        if "Arc Diagram HVG" in selected_sections:
+            st.subheader("Arc Diagram HVG")
             n = len(arr)
             node_x_line = np.arange(n)
             node_y_line = np.zeros(n)
@@ -1259,8 +1083,8 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         #  Export HVG a metrik
         # =========================
-        if "💾 Export HVG a metrik" in selected_sections:
-            st.subheader("💾 Export HVG a metrik")
+        if "Export HVG a metrik" in selected_sections:
+            st.subheader("Export HVG a metrik")
 
             # edge list
             edges_df = pd.DataFrame(list(G.edges()), columns=["source", "target"])
@@ -1289,26 +1113,27 @@ if analysis_mode == "Časová řada → HVG":
             col_exp1, col_exp2, col_exp3 = st.columns(3)
             with col_exp1:
                 st.download_button(
-                    "⬇️ Exportovat HVG jako edge list (CSV)",
+                    "Exportovat HVG jako edge list (CSV)",
                     data=edges_csv,
                     file_name="hvg_edgelist.csv",
                     mime="text/csv"
                 )
             with col_exp2:
                 st.download_button(
-                    "⬇️ Exportovat HVG jako adjacency matrix (CSV)",
+                    "Exportovat HVG jako adjacency matrix (CSV)",
                     data=adj_csv,
                     file_name="hvg_adjacency.csv",
                     mime="text/csv"
                 )
             with col_exp3:
                 st.download_button(
-                    "⬇️ Exportovat metriky HVG (CSV)",
+                    "Exportovat metriky HVG (CSV)",
                     data=metrics_csv,
                     file_name="hvg_metrics.csv",
                     mime="text/csv"
                 )
 
+# ===== tady v další odpovědi navážeme REŽIMEM 2: Vlastní graf … =====
 # =====================================================================
 #  REŽIM 2: VLASTNÍ GRAF Z NODE/EDGE LISTU NEBO CSV
 # =====================================================================
@@ -1403,12 +1228,12 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
         st.session_state.custom_graph = custom_graph
 
     # Hlavní obsah pro vlastní graf
-    st.markdown("## 🧮 Vlastní graf (analýza)")
+    st.markdown("## Vlastní graf (analýza)")
 
     if st.session_state.custom_graph is not None:
         Gc = st.session_state.custom_graph
 
-        st.markdown("### 🧷 Metriky a vizualizace vlastního grafu")
+        st.markdown("### Metriky a vizualizace vlastního grafu")
 
         n_nodes_c = Gc.number_of_nodes()
         n_edges_c = Gc.number_of_edges()
@@ -1496,7 +1321,7 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
                 )
 
         # Vizualizace vlastního grafu
-        st.subheader("🕸️ Vizuální zobrazení vlastního grafu")
+        st.subheader("Vizuální zobrazení vlastního grafu")
 
         if n_nodes_c > 0:
             pos_c = nx.spring_layout(Gc, seed=42)
@@ -1538,14 +1363,14 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
         else:
             st.info("Graf neobsahuje žádné vrcholy – zadej alespoň jeden vrchol nebo hranu.")
     else:
-        st.info("👈 Nejprve zadej vlastní graf v levém panelu (node/edge list nebo CSV).")
+        st.info("Nejprve zadej vlastní graf v levém panelu (node/edge list nebo CSV).")
 
 # =====================================================================
 #  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
 # =====================================================================
 
 else:  # "Porovnat dvě časové řady"
-    st.markdown("## ⚖️ Porovnání dvou časových řad a jejich HVG")
+    st.markdown("## Porovnání dvou časových řad a jejich HVG")
 
     if st.session_state.data is None:
         st.info("Nejdřív vygeneruj časovou řadu v režimu **„Časová řada → HVG“**. "
@@ -1682,7 +1507,7 @@ else:  # "Porovnat dvě časové řady"
         data2 = st.session_state.data2
 
         if data2 is None:
-            st.info("👈 V levém panelu nastav parametry **Série 2** a klikni na "
+            st.info("V levém panelu nastav parametry **Série 2** a klikni na "
                     "**„Načíst / generovat sérii 2“**.")
         else:
             # =============================
@@ -1730,14 +1555,14 @@ else:  # "Porovnat dvě časové řady"
             # Společný výběr sekcí pro obě HVG
             # =============================
             section_options_cmp = [
-                "📊 Metriky HVG",
-                "🔗 Propojení časová řada ↔ HVG",
-                "🧮 Lokální analýza úseku časové řady",
-                "🧩 Podgraf HVG",
-                "📉 Rozdělení stupňů",
-                "🎨 Arc Diagram HVG",
-                "🔁 Konfigurační graf (null model)",
-                "💾 Export HVG a metrik",
+                "Metriky HVG",
+                "Propojení časová řada ↔ HVG",
+                "Lokální analýza úseku časové řady",
+                "Podgraf HVG",
+                "Rozdělení stupňů",
+                "Arc Diagram HVG",
+                "Konfigurační graf (null model)",
+                "Export HVG a metrik",
             ]
             selected_sections_cmp = st.multiselect(
                 "Co chceš pod porovnáním zobrazit pro **obě** HVG?",
@@ -1748,7 +1573,7 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             # Časové řady vedle sebe
             # =============================
-            st.markdown("### 📈 Časové řady vedle sebe")
+            st.markdown("### Časové řady vedle sebe")
 
             col_ts1, col_ts2 = st.columns(2)
             with col_ts1:
@@ -1765,7 +1590,7 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             # HVG vizualizace vedle sebe
             # =============================
-            st.markdown("### 🕸️ HVG grafy vedle sebe")
+            st.markdown("### HVG grafy vedle sebe")
 
             col_g1, col_g2 = st.columns(2)
             with col_g1:
@@ -1831,10 +1656,10 @@ else:  # "Porovnat dvě časové řady"
                 st.plotly_chart(fig_g2, use_container_width=True)
 
             # =============================
-            # 📊 Metriky HVG
+            # Metriky HVG
             # =============================
-            if "📊 Metriky HVG" in selected_sections_cmp:
-                st.markdown("### 📊 Porovnání metrik HVG")
+            if "Metriky HVG" in selected_sections_cmp:
+                st.markdown("### Porovnání metrik HVG")
 
                 col_m1, col_m2 = st.columns(2)
                 with col_m1:
@@ -1904,12 +1729,11 @@ else:  # "Porovnat dvě časové řady"
                             st.warning(msg2)
                         else:
                             st.info(msg2)
-
             # =============================
-            # 🔗 Propojení časová řada ↔ HVG (oboje)
+            # Propojení časová řada ↔ HVG (oboje)
             # =============================
-            if "🔗 Propojení časová řada ↔ HVG" in selected_sections_cmp:
-                st.markdown("### 🔗 Propojení časové řady a HVG (Série 1 & 2)")
+            if "Propojení časová řada ↔ HVG" in selected_sections_cmp:
+                st.markdown("### Propojení časové řady a HVG (Série 1 & 2)")
 
                 tab1, tab2 = st.tabs(["Série 1", "Série 2"])
 
@@ -2086,10 +1910,10 @@ else:  # "Porovnat dvě časové řady"
                         st.plotly_chart(fig_h2, use_container_width=True)
 
             # =============================
-            # 🧮 Lokální analýza úseku časové řady (oboje)
+            # Lokální analýza úseku časové řady (oboje)
             # =============================
-            if "🧮 Lokální analýza úseku časové řady" in selected_sections_cmp:
-                st.markdown("### 🧮 Lokální analýza úseku časové řady (Série 1 & 2)")
+            if "Lokální analýza úseku časové řady" in selected_sections_cmp:
+                st.markdown("### Lokální analýza úseku časové řady (Série 1 & 2)")
 
                 col_loc1, col_loc2 = st.columns(2)
 
@@ -2204,10 +2028,10 @@ else:  # "Porovnat dvě časové řady"
                                     st.write(f"- Průměr grafu: **{diam2s}**")
 
             # =============================
-            # 🧩 Podgraf HVG pro obě série
+            # Podgraf HVG pro obě série
             # =============================
-            if "🧩 Podgraf HVG" in selected_sections_cmp:
-                st.markdown("### 🧩 Podgraf HVG pro obě série")
+            if "Podgraf HVG" in selected_sections_cmp:
+                st.markdown("### Podgraf HVG pro obě série")
 
                 sub_nodes_text = st.text_input(
                     "Seznam vrcholů pro podgraf (indexy oddělené čárkou nebo mezerami) – použijí se na obě HVG",
@@ -2364,10 +2188,10 @@ else:  # "Porovnat dvě časové řady"
                         st.plotly_chart(fig2_sub, use_container_width=True)
 
             # =============================
-            # 🔁 Konfigurační graf (null model) pro obě série
+            #  Konfigurační graf (null model) pro obě série
             # =============================
-            if "🔁 Konfigurační graf (null model)" in selected_sections_cmp:
-                st.markdown("### 🔁 Konfigurační graf (null model) pro obě série")
+            if "Konfigurační graf (null model)" in selected_sections_cmp:
+                st.markdown("### Konfigurační graf (null model) pro obě série")
 
                 # Série 1
                 G1_conf = build_configuration_graph_from_hvg(G1, seed=42)
@@ -2557,10 +2381,10 @@ else:  # "Porovnat dvě časové řady"
                     st.plotly_chart(fig_conf2, use_container_width=True)
 
             # =============================
-            # 📉 Porovnání stupňového rozdělení
+            #  Porovnání stupňového rozdělení
             # =============================
-            if "📉 Rozdělení stupňů" in selected_sections_cmp:
-                st.markdown("### 📉 Porovnání stupňového rozdělení")
+            if "Rozdělení stupňů" in selected_sections_cmp:
+                st.markdown("### Porovnání stupňového rozdělení")
 
                 df_deg_cmp = pd.DataFrame({
                     "degree": degs1 + degs2,
@@ -2586,10 +2410,10 @@ else:  # "Porovnat dvě časové řady"
                 st.plotly_chart(fig_deg_cmp, use_container_width=True)
 
             # =============================
-            # 🎨 Arc Diagram pro obě HVG
+            #  Arc Diagram HVG – obě série
             # =============================
-            if "🎨 Arc Diagram HVG" in selected_sections_cmp:
-                st.markdown("### 🎨 Arc Diagramy HVG – porovnání")
+            if "Arc Diagram HVG" in selected_sections_cmp:
+                st.markdown("### Arc Diagramy HVG – porovnání")
 
                 col_arc1, col_arc2 = st.columns(2)
 
@@ -2664,10 +2488,10 @@ else:  # "Porovnat dvě časové řady"
                     st.plotly_chart(fig_arc2, use_container_width=True)
 
             # =============================
-            # 💾 Export HVG a metrik pro obě série
+            # Export HVG a metrik pro obě série
             # =============================
-            if "💾 Export HVG a metrik" in selected_sections_cmp:
-                st.markdown("### 💾 Export HVG a metrik pro obě série")
+            if "Export HVG a metrik" in selected_sections_cmp:
+                st.markdown("### Export HVG a metrik pro obě série")
 
                 # Série 1
                 edges_df1 = pd.DataFrame(list(G1.edges()), columns=["source", "target"])
@@ -2752,4 +2576,3 @@ else:  # "Porovnat dvě časové řady"
                         file_name="hvg_series2_metrics.csv",
                         mime="text/csv"
                     )
-
