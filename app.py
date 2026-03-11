@@ -124,6 +124,7 @@ def sync_cmp_from_manual():
     st.session_state.csv2_start_manual = start
     st.session_state.csv2_end_manual = end
     st.session_state.csv2_range = (start, end)
+    
 # =========================
 #  Inicializace session state
 # =========================
@@ -2040,6 +2041,9 @@ else:  # "Porovnat dvě časové řady"
                 )
             else:
                 st.session_state.data2 = data2_candidate.copy()
+                st.sidebar.success(f"Načteno {len(data2_candidate)} hodnot pro sérii 2.")
+                if src2 == "Nahrát CSV":
+                    st.sidebar.caption(f"Indexy série 2: {csv2_start_index} → {csv2_end_index}")
 
         data2 = st.session_state.data2
 
