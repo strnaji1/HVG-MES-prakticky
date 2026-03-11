@@ -26,13 +26,25 @@ from services.analysis import (
 )
 
 
-def load_csv_series(uploaded_file, selected_column=None, normalize=False):
+def load_csv_series(
+    uploaded_file,
+    selected_column=None,
+    normalize=False,
+    start_index=0,
+    end_index=None,
+    has_header=True,
+):
     if uploaded_file is None:
         return None, None, "Nebyl nahrán žádný soubor."
 
     try:
         uploaded_file.seek(0)
-        df = pd.read_csv(uploaded_file, sep=None, engine="python")
+
+        if has_header:
+            df = pd.read_csv(uploaded_file, sep=None, engine="python")
+        else:
+            df = pd.read_csv(uploaded_file, sep=None, engine="python", header=None)
+            df.columns = [f"sloupec_{i}" for i in range(df.shape[1])]
 
         if df.empty:
             return None, None, "CSV soubor je prázdný."
@@ -49,6 +61,23 @@ def load_csv_series(uploaded_file, selected_column=None, normalize=False):
         if len(series) == 0:
             return df, None, "Vybraný sloupec neobsahuje žádné číselné hodnoty."
 
+        if start_index < 0:
+            start_index = 0
+
+        if end_index is None:
+            end_index = len(series) - 1
+
+        if end_index >= len(series):
+            end_index = len(series) - 1
+
+        if start_index > end_index:
+            return df, None, "Počáteční index je větší než koncový index."
+
+        series = series.iloc[start_index : end_index + 1]
+
+        if len(series) == 0:
+            return df, None, "Ve zvoleném rozsahu nejsou žádná data."
+
         data = series.values.astype(float)
 
         if normalize:
@@ -61,7 +90,40 @@ def load_csv_series(uploaded_file, selected_column=None, normalize=False):
     except Exception as e:
         return None, None, f"Chyba při načítání CSV: {e}"
 
+def sync_main_from_slider():
+    start, end = st.session_state.csv_main_range
+    st.session_state.csv_main_start_manual = start
+    st.session_state.csv_main_end_manual = end
 
+
+def sync_main_from_manual():
+    start = st.session_state.csv_main_start_manual
+    end = st.session_state.csv_main_end_manual
+
+    if start > end:
+        start, end = end, start
+
+    st.session_state.csv_main_start_manual = start
+    st.session_state.csv_main_end_manual = end
+    st.session_state.csv_main_range = (start, end)
+
+
+def sync_cmp_from_slider():
+    start, end = st.session_state.csv2_range
+    st.session_state.csv2_start_manual = start
+    st.session_state.csv2_end_manual = end
+
+
+def sync_cmp_from_manual():
+    start = st.session_state.csv2_start_manual
+    end = st.session_state.csv2_end_manual
+
+    if start > end:
+        start, end = end, start
+
+    st.session_state.csv2_start_manual = start
+    st.session_state.csv2_end_manual = end
+    st.session_state.csv2_range = (start, end)
 # =========================
 #  Inicializace session state
 # =========================
@@ -142,15 +204,26 @@ if analysis_mode == "Časová řada → HVG":
 
             csv_column = None
             normalize_csv = False
+            csv_start_index = 0
+            csv_end_index = 0
+            csv_has_header = True
 
             if uploaded_file is not None:
-                df_preview, _, err = load_csv_series(uploaded_file)
+                csv_has_header = st.sidebar.checkbox(
+                    "CSV má hlavičku", value=True, key="csv_main_header"
+                )
+
+                df_preview, _, err = load_csv_series(
+                    uploaded_file,
+                    has_header=csv_has_header,
+                )
 
                 if err:
                     st.sidebar.error(err)
                 else:
                     st.sidebar.caption("Náhled (prvních 5 řádků):")
                     st.sidebar.dataframe(df_preview.head(), use_container_width=True)
+
                     csv_column = st.sidebar.selectbox(
                         "Vyber sloupec s hodnotami časové řady",
                         options=df_preview.columns.tolist(),
@@ -160,6 +233,68 @@ if analysis_mode == "Časová řada → HVG":
                     normalize_csv = st.sidebar.checkbox(
                         "Normalizovat (z-score)", value=True, key="csv_main_norm"
                     )
+
+                    st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
+
+                    max_possible_index = max(0, len(df_preview) - 1)
+                    default_end_main = min(999, max_possible_index)
+
+                    if "csv_main_range" not in st.session_state:
+                        st.session_state.csv_main_range = (0, default_end_main)
+
+                    if "csv_main_start_manual" not in st.session_state:
+                        st.session_state.csv_main_start_manual = st.session_state.csv_main_range[0]
+
+                    if "csv_main_end_manual" not in st.session_state:
+                        st.session_state.csv_main_end_manual = st.session_state.csv_main_range[1]
+
+                    # ořez kvůli novému souboru / jiné délce
+                    start_tmp, end_tmp = st.session_state.csv_main_range
+                    start_tmp = min(max(0, start_tmp), max_possible_index)
+                    end_tmp = min(max(0, end_tmp), max_possible_index)
+                    if start_tmp > end_tmp:
+                        start_tmp, end_tmp = end_tmp, start_tmp
+
+                    st.session_state.csv_main_range = (start_tmp, end_tmp)
+                    st.session_state.csv_main_start_manual = start_tmp
+                    st.session_state.csv_main_end_manual = end_tmp
+
+                    csv_start_index, csv_end_index = st.sidebar.slider(
+                        "Vyber rozsah řádků",
+                        min_value=0,
+                        max_value=max_possible_index,
+                        step=1,
+                        key="csv_main_range",
+                        on_change=sync_main_from_slider,
+                    )
+
+                    col_range_1, col_range_2 = st.sidebar.columns(2)
+
+                    with col_range_1:
+                        st.number_input(
+                            "Od",
+                            min_value=0,
+                            max_value=max_possible_index,
+                            step=1,
+                            key="csv_main_start_manual",
+                            on_change=sync_main_from_manual,
+                        )
+
+                    with col_range_2:
+                        st.number_input(
+                            "Do",
+                            min_value=0,
+                            max_value=max_possible_index,
+                            step=1,
+                            key="csv_main_end_manual",
+                            on_change=sync_main_from_manual,
+                        )
+
+                    csv_start_index = st.session_state.csv_main_start_manual
+                    csv_end_index = st.session_state.csv_main_end_manual
+
+                    selected_length = csv_end_index - csv_start_index + 1
+                    st.sidebar.caption(f"Vybraný úsek obsahuje {selected_length} časových údajů.")
 
         elif typ == "Ruční vstup":
             raw_text = st.sidebar.text_area(
@@ -242,6 +377,9 @@ if analysis_mode == "Časová řada → HVG":
                         uploaded_file,
                         selected_column=csv_column,
                         normalize=normalize_csv,
+                        start_index=csv_start_index,
+                        end_index=csv_end_index,
+                        has_header=csv_has_header,
                     )
 
                     if err:
@@ -270,6 +408,11 @@ if analysis_mode == "Časová řada → HVG":
                 data = generate_pink_noise(length)
 
         st.session_state.data = data
+        
+        if data is not None:
+            st.success(f"Načteno {len(data)} hodnot.")
+            if typ == "Nahrát CSV":
+                st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
         st.session_state.show_hvg = False
         st.session_state.show_direct = False
         st.session_state.show_horiz = False
@@ -1662,7 +1805,14 @@ else:  # "Porovnat dvě časové řady"
             )
 
             if file2 is not None:
-                df2_preview, _, err = load_csv_series(file2)
+                csv2_has_header = st.sidebar.checkbox(
+                    "CSV série 2 má hlavičku", value=True, key="csv2_header"
+                )
+
+                df2_preview, _, err = load_csv_series(
+                    file2,
+                    has_header=csv2_has_header,
+                )
 
                 if err:
                     st.sidebar.error(err)
@@ -1676,10 +1826,75 @@ else:  # "Porovnat dvě časové řady"
                         key="csv2_col",
                     )
 
+                    st.sidebar.markdown("**Výběr rozsahu dat pro sérii 2**")
+
+                    max_possible_index2 = max(0, len(df2_preview) - 1)
+                    default_end_cmp = min(999, max_possible_index2)
+
+                    if "csv2_range" not in st.session_state:
+                        st.session_state.csv2_range = (0, default_end_cmp)
+
+                    if "csv2_start_manual" not in st.session_state:
+                        st.session_state.csv2_start_manual = st.session_state.csv2_range[0]
+
+                    if "csv2_end_manual" not in st.session_state:
+                        st.session_state.csv2_end_manual = st.session_state.csv2_range[1]
+
+                    # ořez kvůli novému souboru / jiné délce
+                    start_tmp2, end_tmp2 = st.session_state.csv2_range
+                    start_tmp2 = min(max(0, start_tmp2), max_possible_index2)
+                    end_tmp2 = min(max(0, end_tmp2), max_possible_index2)
+                    if start_tmp2 > end_tmp2:
+                        start_tmp2, end_tmp2 = end_tmp2, start_tmp2
+
+                    st.session_state.csv2_range = (start_tmp2, end_tmp2)
+                    st.session_state.csv2_start_manual = start_tmp2
+                    st.session_state.csv2_end_manual = end_tmp2
+
+                    csv2_start_index, csv2_end_index = st.sidebar.slider(
+                        "Vyber rozsah řádků série 2",
+                        min_value=0,
+                        max_value=max_possible_index2,
+                        step=1,
+                        key="csv2_range",
+                        on_change=sync_cmp_from_slider,
+                    )
+
+                    col_range2_1, col_range2_2 = st.sidebar.columns(2)
+
+                    with col_range2_1:
+                        st.number_input(
+                            "Od série 2",
+                            min_value=0,
+                            max_value=max_possible_index2,
+                            step=1,
+                            key="csv2_start_manual",
+                            on_change=sync_cmp_from_manual,
+                        )
+
+                    with col_range2_2:
+                        st.number_input(
+                            "Do série 2",
+                            min_value=0,
+                            max_value=max_possible_index2,
+                            step=1,
+                            key="csv2_end_manual",
+                            on_change=sync_cmp_from_manual,
+                        )
+
+                    csv2_start_index = st.session_state.csv2_start_manual
+                    csv2_end_index = st.session_state.csv2_end_manual
+
+                    selected_length2 = csv2_end_index - csv2_start_index + 1
+                    st.sidebar.caption(f"Vybraný úsek série 2 obsahuje {selected_length2} časových údajů.")
+                    
                     _, data2_candidate, err2 = load_csv_series(
                         file2,
                         selected_column=selected_column2,
                         normalize=normalize_csv2,
+                        start_index=csv2_start_index,
+                        end_index=csv2_end_index,
+                        has_header=csv2_has_header,
                     )
 
                     if err2:
@@ -1824,7 +2039,7 @@ else:  # "Porovnat dvě časové řady"
                     "Série 2 zatím není připravená – zkontroluj nastavení / CSV."
                 )
             else:
-                st.session_state.data2 = data2_candidate
+                st.session_state.data2 = data2_candidate.copy()
 
         data2 = st.session_state.data2
 
