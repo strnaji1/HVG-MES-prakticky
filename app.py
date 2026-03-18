@@ -426,20 +426,27 @@ if analysis_mode == "Časová řada → HVG":
                                 key="csv_main_date_end",
                             )
 
-                            preview_filtered = df_preview.copy()
-                            preview_filtered[csv_datetime_column] = pd.to_datetime(
-                                preview_filtered[csv_datetime_column], errors="coerce"
+                            _, _, preview_meta, preview_err = load_csv_series(
+                                uploaded_file,
+                                selected_column=csv_column,
+                                normalize=False,
+                                start_index=0,
+                                end_index=None,
+                                has_header=csv_has_header,
+                                datetime_column=csv_datetime_column,
+                                selection_mode="date",
+                                start_date=csv_start_date,
+                                end_date=csv_end_date,
+                                aggregation_freq=aggregation_freq_main,
+                                aggregation_method=aggregation_method_main,
                             )
-                            preview_filtered = preview_filtered.dropna(subset=[csv_datetime_column])
 
-                            preview_filtered = preview_filtered[
-                                (preview_filtered[csv_datetime_column] >= pd.to_datetime(csv_start_date)) &
-                                (preview_filtered[csv_datetime_column] <= pd.to_datetime(csv_end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
-                            ]
-
-                            st.sidebar.caption(
-                                f"Vybraný datový úsek obsahuje přibližně {len(preview_filtered)} časových údajů."
-                            )
+                            if preview_err:
+                                st.sidebar.warning(preview_err)
+                            elif preview_meta is not None:
+                                st.sidebar.caption(
+                                    f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
+                                )
                         else:
                             st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
                     else:
@@ -499,10 +506,27 @@ if analysis_mode == "Časová řada → HVG":
                         csv_start_index = st.session_state.csv_main_start_manual
                         csv_end_index = st.session_state.csv_main_end_manual
 
-                        selected_length = csv_end_index - csv_start_index + 1
-                        st.sidebar.caption(
-                            f"Vybraný úsek obsahuje {selected_length} časových údajů."
+                        _, _, preview_meta, preview_err = load_csv_series(
+                            uploaded_file,
+                            selected_column=csv_column,
+                            normalize=False,
+                            start_index=csv_start_index,
+                            end_index=csv_end_index,
+                            has_header=csv_has_header,
+                            datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
+                            selection_mode="index",
+                            start_date=None,
+                            end_date=None,
+                            aggregation_freq=aggregation_freq_main,
+                            aggregation_method=aggregation_method_main,
                         )
+
+                        if preview_err:
+                            st.sidebar.warning(preview_err)
+                        elif preview_meta is not None:
+                            st.sidebar.caption(
+                                f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
+                            )
 
         elif typ == "Ruční vstup":
             raw_text = st.sidebar.text_area(
@@ -2135,20 +2159,27 @@ else:  # "Porovnat dvě časové řady"
                                 key="csv2_date_end",
                             )
 
-                            preview_filtered2 = df2_preview.copy()
-                            preview_filtered2[csv2_datetime_column] = pd.to_datetime(
-                                preview_filtered2[csv2_datetime_column], errors="coerce"
+                            _, _, preview_meta2, preview_err2 = load_csv_series(
+                                file2,
+                                selected_column=selected_column2,
+                                normalize=False,
+                                start_index=0,
+                                end_index=None,
+                                has_header=csv2_has_header,
+                                datetime_column=csv2_datetime_column,
+                                selection_mode="date",
+                                start_date=csv2_start_date,
+                                end_date=csv2_end_date,
+                                aggregation_freq=aggregation_freq_cmp,
+                                aggregation_method=aggregation_method_cmp,
                             )
-                            preview_filtered2 = preview_filtered2.dropna(subset=[csv2_datetime_column])
 
-                            preview_filtered2 = preview_filtered2[
-                                (preview_filtered2[csv2_datetime_column] >= pd.to_datetime(csv2_start_date)) &
-                                (preview_filtered2[csv2_datetime_column] <= pd.to_datetime(csv2_end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
-                            ]
-
-                            st.sidebar.caption(
-                                f"Vybraný datový úsek série 2 obsahuje přibližně {len(preview_filtered2)} časových údajů."
-                            )
+                            if preview_err2:
+                                st.sidebar.warning(preview_err2)
+                            elif preview_meta2 is not None:
+                                st.sidebar.caption(
+                                    f"Po načtení vznikne přibližně {preview_meta2['n_points']} bodů časové řady."
+                                )
                         else:
                             st.sidebar.warning("Ve vybraném datetime sloupci Série 2 nejsou platná data.")
                     else:
@@ -2208,10 +2239,27 @@ else:  # "Porovnat dvě časové řady"
                         csv2_start_index = st.session_state.csv2_start_manual
                         csv2_end_index = st.session_state.csv2_end_manual
 
-                        selected_length2 = csv2_end_index - csv2_start_index + 1
-                        st.sidebar.caption(
-                            f"Vybraný úsek série 2 obsahuje {selected_length2} časových údajů."
+                        _, _, preview_meta2, preview_err2 = load_csv_series(
+                            file2,
+                            selected_column=selected_column2,
+                            normalize=False,
+                            start_index=csv2_start_index,
+                            end_index=csv2_end_index,
+                            has_header=csv2_has_header,
+                            datetime_column=None if csv2_datetime_column == "Žádný" else csv2_datetime_column,
+                            selection_mode="index",
+                            start_date=None,
+                            end_date=None,
+                            aggregation_freq=aggregation_freq_cmp,
+                            aggregation_method=aggregation_method_cmp,
                         )
+
+                        if preview_err2:
+                            st.sidebar.warning(preview_err2)
+                        elif preview_meta2 is not None:
+                            st.sidebar.caption(
+                                f"Po načtení vznikne přibližně {preview_meta2['n_points']} bodů časové řady."
+                            )
                     
                     _, data2_candidate, meta2, err2 = load_csv_series(
                         file2,
