@@ -148,6 +148,7 @@ def load_csv_series(
                     return df, None, None, "Po agregaci nezůstala žádná data."
 
             data = work_df[selected_column].values.astype(float)
+            original_data = data.copy()
 
             if normalize:
                 std = float(np.std(data))
@@ -163,6 +164,11 @@ def load_csv_series(
                 "selection_mode": selection_mode,
                 "aggregation_freq": aggregation_freq,
                 "aggregation_method": aggregation_method,
+                "normalized": normalize,
+                "original_mean": float(np.mean(original_data)),
+                "original_var": float(np.var(original_data)),
+                "processed_mean": float(np.mean(data)),
+                "processed_var": float(np.var(data)),
             }
 
             return df, data, meta, None
@@ -189,6 +195,7 @@ def load_csv_series(
                 return df, None, None, "Ve zvoleném rozsahu nejsou žádná data."
 
             data = work_df[selected_column].values.astype(float)
+            original_data = data.copy()
 
             if normalize:
                 std = float(np.std(data))
@@ -204,6 +211,11 @@ def load_csv_series(
                 "selection_mode": "index",
                 "aggregation_freq": None,
                 "aggregation_method": None,
+                "normalized": normalize,
+                "original_mean": float(np.mean(original_data)),
+                "original_var": float(np.var(original_data)),
+                "processed_mean": float(np.mean(data)),
+                "processed_var": float(np.var(data)),
             }
 
             return df, data, meta, None
@@ -250,9 +262,9 @@ def sync_cmp_from_manual():
 #  Inicializace session state
 # =========================
 
-for key in ("data", "data2", "show_hvg", "show_direct", "show_horiz", "custom_graph"):
+for key in ("data", "data2", "meta", "meta2", "show_hvg", "show_direct", "show_horiz", "custom_graph"):
     if key not in st.session_state:
-        if key in ("data", "data2"):
+        if key in ("data", "data2", "meta", "meta2"):
             st.session_state[key] = None
         elif key == "custom_graph":
             st.session_state[key] = None
@@ -369,8 +381,13 @@ if analysis_mode == "Časová řada → HVG":
                         )
 
                     normalize_csv = st.sidebar.checkbox(
-                        "Normalizovat (z-score)", value=True, key="csv_main_norm"
+                        "Normalizovat (z-score)", value=False, key="csv_main_norm"
                     )
+                    if normalize_csv:
+                        st.sidebar.caption(
+                            "Data jsou převedena na bezrozměrnou škálu (z-score). "
+                            "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
+                        )
                     aggregation_freq_main = "bez agregace"
                     aggregation_method_main = "mean"
 
@@ -647,6 +664,7 @@ if analysis_mode == "Časová řada → HVG":
                 data = generate_pink_noise(length)
 
         st.session_state.data = data
+        st.session_state.meta = meta
         
         if data is not None:
             st.success(f"Načteno {len(data)} hodnot.")
@@ -678,6 +696,7 @@ if analysis_mode == "Časová řada → HVG":
 
     if st.session_state.data is not None:
         arr = st.session_state.data
+        meta = st.session_state.meta
         st.subheader("Vaše časová řada")
 
         df_ts = pd.DataFrame({"index": np.arange(len(arr)), "value": arr})
@@ -729,11 +748,22 @@ if analysis_mode == "Časová řada → HVG":
         st.plotly_chart(fig_ts, use_container_width=True)
 
         # Statistiky časové řady
-        st.write(
-            f"- Délka: **{len(arr)}**, "
-            f"Průměr: **{arr.mean():.3f}**, "
-            f"Rozptyl: **{arr.var():.3f}**"
-        )
+        st.write(f"- Délka: **{len(arr)}**")
+
+        if meta is not None and meta.get("normalized", False):
+            st.write(
+                f"- Původní průměr: **{meta['original_mean']:.3f}**, "
+                f"Původní rozptyl: **{meta['original_var']:.3f}**"
+            )
+            st.write(
+                f"- Průměr po normalizaci: **{meta['processed_mean']:.3f}**, "
+                f"Rozptyl po normalizaci: **{meta['processed_var']:.3f}**"
+            )
+        else:
+            st.write(
+                f"- Průměr: **{arr.mean():.3f}**, "
+                f"Rozptyl: **{arr.var():.3f}**"
+            )
 
         # Tlačítka vedle sebe (toggle)
         c1, c2, c3 = st.columns(3)
@@ -2059,7 +2089,11 @@ else:  # "Porovnat dvě časové řady"
             normalize_csv2 = st.sidebar.checkbox(
                 "Normalizovat sérii 2 (z-score)", value=False, key="csv2_norm"
             )
-
+            if normalize_csv2:
+                st.sidebar.caption(
+                    "Série 2 je převedena na bezrozměrnou škálu (z-score). "
+                    "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
+                )
             aggregation_freq_cmp = "bez agregace"
             aggregation_method_cmp = "mean"
             csv2_start_index = 0
@@ -2420,6 +2454,7 @@ else:  # "Porovnat dvě časové řady"
                 )
             else:
                 st.session_state.data2 = data2_candidate.copy()
+                st.session_state.meta2 = meta2
                 st.sidebar.success(f"Načteno {len(data2_candidate)} hodnot pro sérii 2.")
 
                 if src2 == "Nahrát CSV":
@@ -2442,6 +2477,7 @@ else:  # "Porovnat dvě časové řady"
                         st.sidebar.caption(f"Indexy série 2: {csv2_start_index} → {csv2_end_index}")
 
         data2 = st.session_state.data2
+        meta2_saved = st.session_state.meta2
 
         if data2 is None:
             st.info(
@@ -2454,11 +2490,22 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             st.markdown("### Série 2 – nastavená v levém panelu")
 
-            st.write(
-                f"- Délka: **{len(data2)}**, "
-                f"Průměr: **{data2.mean():.3f}**, "
-                f"Rozptyl: **{data2.var():.3f}**"
-            )
+            st.write(f"- Délka: **{len(data2)}**")
+
+            if meta2_saved is not None and meta2_saved.get("normalized", False):
+                st.write(
+                    f"- Původní průměr: **{meta2_saved['original_mean']:.3f}**, "
+                    f"Původní rozptyl: **{meta2_saved['original_var']:.3f}**"
+                )
+                st.write(
+                    f"- Průměr po normalizaci: **{meta2_saved['processed_mean']:.3f}**, "
+                    f"Rozptyl po normalizaci: **{meta2_saved['processed_var']:.3f}**"
+                )
+            else:
+                st.write(
+                    f"- Průměr: **{data2.mean():.3f}**, "
+                    f"Rozptyl: **{data2.var():.3f}**"
+                )
 
             G2 = build_hvg(data2)
             n2 = G2.number_of_nodes()
