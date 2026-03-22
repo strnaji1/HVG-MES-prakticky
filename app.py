@@ -257,15 +257,180 @@ def sync_cmp_from_manual():
     st.session_state.csv2_start_manual = start
     st.session_state.csv2_end_manual = end
     st.session_state.csv2_range = (start, end)
-    
+def infer_series_type(series_name):
+    if not series_name:
+        return None
+
+    s = str(series_name).lower()
+
+    if "light" in s:
+        return "light"
+    if "plug" in s:
+        return "plug"
+    if "ac" in s:
+        return "ac"
+
+    return None
+
+
+def generate_hvg_summary_text(
+    n_nodes,
+    n_edges,
+    avg_deg,
+    C,
+    L,
+    sigma_sw,
+    assort,
+    is_normalized=False,
+    aggregation_freq=None,
+    series_name=None,
+):
+    technical_parts = []
+    interpretation_parts = []
+    verdict_parts = []
+
+    # Technické shrnutí
+    technical_parts.append(
+        f"HVG obsahuje {n_nodes} vrcholů a {n_edges} hran, přičemž průměrný stupeň vrcholu je {avg_deg:.3f}."
+    )
+
+    if C is not None and not np.isnan(C):
+        if C >= 0.4:
+            technical_parts.append(
+                "Graf vykazuje vyšší lokální propojenost, což naznačuje výraznější lokální strukturu v časové řadě."
+            )
+        elif C >= 0.2:
+            technical_parts.append(
+                "Graf vykazuje střední lokální propojenost, takže časová řada obsahuje určitou vnitřní strukturu."
+            )
+        else:
+            technical_parts.append(
+                "Graf má nízkou lokální propojenost, takže časová řada působí méně strukturovaně."
+            )
+
+    if L is not None:
+        technical_parts.append(
+            f"Průměrná délka cesty je {L:.3f}, což popisuje průměrnou vzdálenost mezi vrcholy v síti."
+        )
+
+    if sigma_sw is not None and not np.isnan(sigma_sw):
+        if sigma_sw > 1.1:
+            technical_parts.append(
+                f"Hodnota small-world indexu σ = {sigma_sw:.2f} ukazuje na small-world charakter sítě."
+            )
+        elif sigma_sw >= 0.9:
+            technical_parts.append(
+                f"Hodnota small-world indexu σ = {sigma_sw:.2f} je blízká náhodnému grafu."
+            )
+        else:
+            technical_parts.append(
+                f"Hodnota small-world indexu σ = {sigma_sw:.2f} nenaznačuje výrazný small-world charakter."
+            )
+
+    if assort is not None and not np.isnan(assort):
+        if assort > 0.1:
+            technical_parts.append(
+                "Kladná assortativita naznačuje, že se častěji propojují vrcholy podobného stupně."
+            )
+        elif assort < -0.1:
+            technical_parts.append(
+                "Záporná assortativita naznačuje, že se častěji propojují vrcholy odlišného stupně."
+            )
+
+    # Interpretace časové řady
+    if C is not None and not np.isnan(C) and sigma_sw is not None and not np.isnan(sigma_sw):
+        if C >= 0.3 and sigma_sw > 1:
+            interpretation_parts.append(
+                "Časová řada nepůsobí jako čistě náhodná, ale vykazuje vnitřní organizaci a opakující se strukturální vzory."
+            )
+        elif C < 0.2 and sigma_sw < 1:
+            interpretation_parts.append(
+                "Časová řada působí méně strukturovaně a může být více proměnlivá nebo blízká náhodnému chování."
+            )
+        else:
+            interpretation_parts.append(
+                "Časová řada kombinuje jak strukturální prvky, tak proměnlivost, bez jednoznačně dominantního charakteru."
+            )
+
+    if is_normalized:
+        interpretation_parts.append(
+            "Analýza byla provedena nad normalizovanou časovou řadou, takže se hodnotí především tvar a struktura vývoje, nikoli absolutní velikost hodnot."
+        )
+
+    if aggregation_freq not in (None, "bez agregace"):
+        interpretation_parts.append(
+            f"Data byla před konstrukcí HVG agregována krokem {aggregation_freq}, takže výsledná síť zachycuje strukturu řady na této časové škále."
+        )
+
+    series_type = infer_series_type(series_name)
+
+    if series_type == "light":
+        interpretation_parts.append(
+            "U osvětlení lze očekávat pravidelnější režimy související s denním provozem budovy nebo využíváním prostoru."
+        )
+    elif series_type == "plug":
+        interpretation_parts.append(
+            "U zásuvkových okruhů bývá chování často proměnlivější, protože závisí na skutečném používání zařízení uživateli."
+        )
+    elif series_type == "ac":
+        interpretation_parts.append(
+            "U klimatizačních jednotek mohou být patrné provozní cykly, reakce na okolní podmínky a blokové změny výkonu."
+        )
+
+    # Závěrečný verdikt
+    if sigma_sw is not None and not np.isnan(sigma_sw) and C is not None and not np.isnan(C):
+        if sigma_sw > 1.1 and C >= 0.3:
+            verdict_parts.append(
+                "Výsledný HVG lze interpretovat jako síť odpovídající strukturálně výrazné a relativně pravidelné časové řadě."
+            )
+        elif sigma_sw < 1 and C < 0.2:
+            verdict_parts.append(
+                "Výsledný HVG odpovídá spíše méně strukturované a variabilnější časové řadě."
+            )
+        else:
+            verdict_parts.append(
+                "Výsledný HVG ukazuje středně výraznou strukturu časové řady bez extrémně pravidelného či zcela náhodného charakteru."
+            )
+
+    technical_text = " ".join(technical_parts)
+    interpretation_text = " ".join(interpretation_parts)
+    verdict_text = " ".join(verdict_parts)
+
+    return technical_text, interpretation_text, verdict_text   
 # =========================
 #  Inicializace session state
 # =========================
 
-for key in ("data", "data2", "meta", "meta2", "show_hvg", "show_direct", "show_horiz", "custom_graph"):
+for key in (
+    "data",
+    "data2",
+    "meta",
+    "meta2",
+    "show_hvg",
+    "show_direct",
+    "show_horiz",
+    "custom_graph",
+    "series_name",
+    "series_normalized",
+    "series_aggregation",
+    "series_name2",
+    "series_normalized2",
+    "series_aggregation2",
+):
     if key not in st.session_state:
-        if key in ("data", "data2", "meta", "meta2"):
+        if key in (
+            "data",
+            "data2",
+            "meta",
+            "meta2",
+            "series_name",
+            "series_aggregation",
+            "series_name2",
+            "series_aggregation2",
+        ):
             st.session_state[key] = None
+        elif key in ("series_normalized", "series_normalized2"):
+            st.session_state[key] = False
         elif key == "custom_graph":
             st.session_state[key] = None
         else:
@@ -666,6 +831,15 @@ if analysis_mode == "Časová řada → HVG":
         st.session_state.data = data
         st.session_state.meta = meta
         
+        if typ == "Nahrát CSV" and data is not None:
+            st.session_state.series_name = csv_column
+            st.session_state.series_normalized = normalize_csv
+            st.session_state.series_aggregation = aggregation_freq_main
+        elif data is not None:
+            st.session_state.series_name = typ if typ is not None else chaos_typ
+            st.session_state.series_normalized = False
+            st.session_state.series_aggregation = None
+        
         if data is not None:
             st.success(f"Načteno {len(data)} hodnot.")
             if typ == "Nahrát CSV":
@@ -794,6 +968,7 @@ if analysis_mode == "Časová řada → HVG":
         # ---- Přehledné přepínání sekcí pod HVG ----
         section_options = [
             "Metriky HVG",
+            "Shrnutí analýzy",
             "Propojení časová řada ↔ HVG",
             "Lokální analýza úseku časové řady",
             "Podgraf HVG",
@@ -807,6 +982,7 @@ if analysis_mode == "Časová řada → HVG":
             options=section_options,
             default=[
                 "Metriky HVG",
+                "Shrnutí analýzy",
                 "Rozdělení stupňů + power-law",
                 "Arc Diagram HVG",
                 "Export HVG a metrik",
@@ -1019,6 +1195,7 @@ if analysis_mode == "Časová řada → HVG":
         st.plotly_chart(fig_hvg, use_container_width=True)
 
         # ====== Metriky HVG ======
+                # ====== Metriky HVG ======
         if "Metriky HVG" in selected_sections:
             col_stats1, col_stats2 = st.columns(2)
             with col_stats1:
@@ -1073,6 +1250,53 @@ if analysis_mode == "Časová řada → HVG":
                         "- Small-world index σ: *nelze spočítat "
                         "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
                     )
+
+        # ====== Shrnutí analýzy ======
+        if "Shrnutí analýzy" in selected_sections:
+            st.subheader("Shrnutí analýzy")
+
+            series_name = st.session_state.get("series_name", None)
+            is_normalized = st.session_state.get("series_normalized", False)
+            aggregation_freq_used = st.session_state.get("series_aggregation", None)
+
+            technical_text, interpretation_text, verdict_text = generate_hvg_summary_text(
+                n_nodes=n_nodes,
+                n_edges=n_edges,
+                avg_deg=avg_deg,
+                C=C,
+                L=L,
+                sigma_sw=sigma_sw,
+                assort=assort,
+                is_normalized=is_normalized,
+                aggregation_freq=aggregation_freq_used,
+                series_name=series_name,
+            )
+
+            col_sum1, col_sum2, col_sum3 = st.columns(3)
+
+            with col_sum1:
+                st.metric("Počet vrcholů", n_nodes)
+                st.metric("Počet hran", n_edges)
+
+            with col_sum2:
+                st.metric("Průměrný stupeň", f"{avg_deg:.3f}")
+                st.metric("Clustering", f"{C:.3f}" if not np.isnan(C) else "N/A")
+
+            with col_sum3:
+                st.metric("Průměrná délka cesty", f"{L:.3f}" if L is not None else "N/A")
+                st.metric(
+                    "Small-world index σ",
+                    f"{sigma_sw:.2f}" if sigma_sw is not None and not np.isnan(sigma_sw) else "N/A"
+                )
+
+            st.markdown("**Technické shrnutí**")
+            st.info(technical_text)
+
+            st.markdown("**Interpretace časové řady**")
+            st.write(interpretation_text)
+
+            st.markdown("**Závěrečný verdikt**")
+            st.success(verdict_text)
 
         st.markdown("---")
 
@@ -2455,6 +2679,16 @@ else:  # "Porovnat dvě časové řady"
             else:
                 st.session_state.data2 = data2_candidate.copy()
                 st.session_state.meta2 = meta2
+
+                if src2 == "Nahrát CSV":
+                    st.session_state.series_name2 = selected_column2
+                    st.session_state.series_normalized2 = normalize_csv2
+                    st.session_state.series_aggregation2 = aggregation_freq_cmp
+                else:
+                    st.session_state.series_name2 = src2
+                    st.session_state.series_normalized2 = False
+                    st.session_state.series_aggregation2 = None
+                
                 st.sidebar.success(f"Načteno {len(data2_candidate)} hodnot pro sérii 2.")
 
                 if src2 == "Nahrát CSV":
@@ -2542,6 +2776,7 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             section_options_cmp = [
                 "Metriky HVG",
+                "Shrnutí analýzy",
                 "Propojení časová řada ↔ HVG",
                 "Lokální analýza úseku časové řady",
                 "Podgraf HVG",
@@ -2729,6 +2964,91 @@ else:  # "Porovnat dvě časové řady"
                             st.warning(msg2)
                         else:
                             st.info(msg2)
+                
+                        # =============================
+            # Shrnutí analýzy pro obě série
+            # =============================
+            if "Shrnutí analýzy" in selected_sections_cmp:
+                st.markdown("### Shrnutí analýzy")
+
+                tech1, interp1, verdict1 = generate_hvg_summary_text(
+                    n_nodes=n1,
+                    n_edges=m1,
+                    avg_deg=avg_deg1,
+                    C=C1,
+                    L=L1,
+                    sigma_sw=sigma1,
+                    assort=assort1,
+                    is_normalized=st.session_state.get("series_normalized", False),
+                    aggregation_freq=st.session_state.get("series_aggregation", None),
+                    series_name=st.session_state.get("series_name", "Série 1"),
+                )
+
+                tech2, interp2, verdict2 = generate_hvg_summary_text(
+                    n_nodes=n2,
+                    n_edges=m2,
+                    avg_deg=avg_deg2,
+                    C=C2,
+                    L=L2,
+                    sigma_sw=sigma2,
+                    assort=assort2,
+                    is_normalized=st.session_state.get("series_normalized2", False),
+                    aggregation_freq=st.session_state.get("series_aggregation2", None),
+                    series_name=st.session_state.get("series_name2", "Série 2"),
+                )
+
+                col_s1, col_s2 = st.columns(2)
+
+                with col_s1:
+                    st.markdown("**Série 1 – shrnutí**")
+                    st.info(tech1)
+                    st.write(interp1)
+                    st.success(verdict1)
+
+                with col_s2:
+                    st.markdown("**Série 2 – shrnutí**")
+                    st.info(tech2)
+                    st.write(interp2)
+                    st.success(verdict2)
+                    st.markdown("### Porovnávací verdikt")
+
+                    comparison_parts = []
+
+                    if not np.isnan(C1) and not np.isnan(C2):
+                        if C1 > C2:
+                            comparison_parts.append(
+                                "Série 1 vykazuje vyšší lokální propojenost než Série 2."
+                            )
+                        elif C2 > C1:
+                            comparison_parts.append(
+                                "Série 2 vykazuje vyšší lokální propojenost než Série 1."
+                            )
+
+                    if sigma1 is not None and sigma2 is not None and not np.isnan(sigma1) and not np.isnan(sigma2):
+                        if sigma1 > sigma2:
+                            comparison_parts.append(
+                                "Z hlediska small-world indexu je Série 1 strukturálně výraznější."
+                            )
+                        elif sigma2 > sigma1:
+                            comparison_parts.append(
+                                "Z hlediska small-world indexu je Série 2 strukturálně výraznější."
+                            )
+
+                    if avg_deg1 > avg_deg2:
+                        comparison_parts.append(
+                            "HVG Série 1 je v průměru propojenější než HVG Série 2."
+                        )
+                    elif avg_deg2 > avg_deg1:
+                        comparison_parts.append(
+                            "HVG Série 2 je v průměru propojenější než HVG Série 1."
+                        )
+
+                    if not comparison_parts:
+                        comparison_parts.append(
+                            "Obě série mají z hlediska základních síťových metrik velmi podobný charakter."
+                        )
+
+                    st.warning(" ".join(comparison_parts))
             # =============================
             # Propojení časová řada ↔ HVG (oboje)
             # =============================
