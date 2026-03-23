@@ -1707,6 +1707,70 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         if "Rozdělení stupňů + power-law" in selected_sections:
             degs = degrees
+            # Základní metriky stupňového rozdělení
+            unique_deg, counts = np.unique(degs, return_counts=True)
+            pk = counts / counts.sum()
+
+            entropy_deg = -np.sum(pk * np.log(pk))
+
+            # Normalizovaná entropie na intervalu <0, 1>
+            n_unique_deg = len(unique_deg)
+            if n_unique_deg > 1:
+                entropy_deg_norm = entropy_deg / np.log(n_unique_deg)
+            else:
+                entropy_deg_norm = 0.0
+
+            # Slovní klasifikace normalizované entropie
+            if entropy_deg_norm < 0.2:
+                entropy_level = "velmi nízká"
+                entropy_text = (
+                    "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované. "
+                    "Síť působí velmi uspořádaně a strukturálně omezeně."
+                )
+            elif entropy_deg_norm < 0.4:
+                entropy_level = "nízká"
+                entropy_text = (
+                    "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené. "
+                    "Síť vykazuje výraznější pravidelnost a nižší variabilitu."
+                )
+            elif entropy_deg_norm < 0.6:
+                entropy_level = "střední"
+                entropy_text = (
+                    "Stupňové rozdělení je středně rozptýlené. "
+                    "Síť kombinuje určitou pravidelnost i variabilitu."
+                )
+            elif entropy_deg_norm < 0.8:
+                entropy_level = "vysoká"
+                entropy_text = (
+                    "Vrcholy mají rozmanitější stupně a stupňové rozdělení je výrazněji rozptýlené. "
+                    "Síť působí komplexněji a méně pravidelně."
+                )
+            else:
+                entropy_level = "velmi vysoká"
+                entropy_text = (
+                    "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené. "
+                    "Síť vykazuje vysokou variabilitu a vysokou míru strukturální různorodosti."
+                )
+
+            st.subheader("Základní metriky stupňového rozdělení")
+
+            col_deg_1, col_deg_2, col_deg_3, col_deg_4, col_deg_5 = st.columns(5)
+
+            with col_deg_1:
+                st.metric("Průměrný stupeň", f"{np.mean(degs):.3f}")
+
+            with col_deg_2:
+                st.metric("Medián stupně", f"{np.median(degs):.3f}")
+
+            with col_deg_3:
+                st.metric("Maximální stupeň", f"{np.max(degs)}")
+
+            with col_deg_4:
+                st.metric("Shannonova entropie", f"{entropy_deg:.3f}")
+
+            with col_deg_5:
+                st.metric("Norm. entropie",f"{entropy_deg_norm:.3f}",delta=entropy_level)
+            st.caption(f"Interpretace: {entropy_text}")    
             df_deg = pd.DataFrame({"degree": degs})
             fig_hist = px.histogram(
                 df_deg,
@@ -1718,11 +1782,7 @@ if analysis_mode == "Časová řada → HVG":
             )
             fig_hist.update_layout(yaxis_title="Počet vrcholů")
             st.plotly_chart(fig_hist, use_container_width=True)
-
             # Power-law graf P(k) vs k (log–log)
-            unique_deg, counts = np.unique(degs, return_counts=True)
-            pk = counts / counts.sum()
-
             df_power = pd.DataFrame({"degree": unique_deg, "pk": pk})
 
             st.subheader("Power-law (log–log) graf rozdělení stupňů")
