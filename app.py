@@ -1769,8 +1769,9 @@ if analysis_mode == "Časová řada → HVG":
                 st.metric("Shannonova entropie", f"{entropy_deg:.3f}")
 
             with col_deg_5:
-                st.metric("Norm. entropie",f"{entropy_deg_norm:.3f}",delta=entropy_level)
-            st.caption(f"Interpretace: {entropy_text}")    
+                st.metric("Norm. entropie", f"{entropy_deg_norm:.3f}")
+                st.caption(entropy_level)  
+            
             df_deg = pd.DataFrame({"degree": degs})
             fig_hist = px.histogram(
                 df_deg,
@@ -1782,10 +1783,41 @@ if analysis_mode == "Časová řada → HVG":
             )
             fig_hist.update_layout(yaxis_title="Počet vrcholů")
             st.plotly_chart(fig_hist, use_container_width=True)
+
+            # =========================
+            # PDF stupňového rozdělení
+            # =========================
+            st.subheader("PDF stupňového rozdělení")
+
+            df_pdf = pd.DataFrame({"degree": unique_deg, "pk": pk})
+
+            fig_pdf = px.line(
+                df_pdf,
+                x="degree",
+                y="pk",
+                markers=True,
+                title="PDF stupňového rozdělení P(k)",
+                labels={"degree": "Stupeň k", "pk": "P(k)"},
+            )
+
+            fig_pdf.update_layout(
+                xaxis_title="Stupeň k",
+                yaxis_title="Pravděpodobnost P(k)",
+            )
+
+            st.plotly_chart(fig_pdf, use_container_width=True)
+
+            st.caption(
+                "PDF (Probability Distribution Function) ukazuje pravděpodobnost, "
+                "že náhodně vybraný vrchol v HVG má právě stupeň k."
+            )
+
             # Power-law graf P(k) vs k (log–log)
             df_power = pd.DataFrame({"degree": unique_deg, "pk": pk})
 
-            st.subheader("Power-law (log–log) graf rozdělení stupňů")
+            st.markdown("---")
+            
+            st.subheader("Log–log graf stupňového rozdělení")
 
             fig_power = px.scatter(
                 df_power,
@@ -2840,7 +2872,7 @@ else:  # "Porovnat dvě časové řady"
                 "Propojení časová řada ↔ HVG",
                 "Lokální analýza úseku časové řady",
                 "Podgraf HVG",
-                "Rozdělení stupňů",
+                "Rozdělení stupňů + power-law",
                 "Arc Diagram HVG",
                 "Konfigurační graf (null model)",
                 "Export HVG a metrik",
@@ -3025,7 +3057,7 @@ else:  # "Porovnat dvě časové řady"
                         else:
                             st.info(msg2)
                 
-                        # =============================
+            # =============================
             # Shrnutí analýzy pro obě série
             # =============================
             if "Shrnutí analýzy" in selected_sections_cmp:
@@ -3849,34 +3881,152 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             #  Porovnání stupňového rozdělení
             # =============================
-            if "Rozdělení stupňů" in selected_sections_cmp:
-                st.markdown("### Porovnání stupňového rozdělení")
+                        # =============================
+                #  Porovnání stupňového rozdělení
+                # =============================
+                if "Rozdělení stupňů + power-law" in selected_sections_cmp:
+                    st.markdown("### Porovnání stupňového rozdělení")
 
-                df_deg_cmp = pd.DataFrame(
-                    {
-                        "degree": degs1 + degs2,
-                        "serie": (["Série 1"] * len(degs1))
-                        + (["Série 2"] * len(degs2)),
-                    }
-                )
+                    # -----------------------------
+                    # Série 1 – stupňové rozdělení
+                    # -----------------------------
+                    unique_deg1, counts1 = np.unique(degs1, return_counts=True)
+                    pk1 = counts1 / counts1.sum()
 
-                max_deg = max(
-                    max(degs1) if len(degs1) > 0 else 1,
-                    max(degs2) if len(degs2) > 0 else 1,
-                )
+                    entropy_deg1 = -np.sum(pk1 * np.log(pk1))
+                    n_unique_deg1 = len(unique_deg1)
+                    if n_unique_deg1 > 1:
+                        entropy_deg_norm1 = entropy_deg1 / np.log(n_unique_deg1)
+                    else:
+                        entropy_deg_norm1 = 0.0
 
-                fig_deg_cmp = px.histogram(
-                    df_deg_cmp,
-                    x="degree",
-                    color="serie",
-                    barmode="overlay",
-                    opacity=0.6,
-                    nbins=max_deg + 1,
-                    title="Histogram stupňů – série 1 vs. série 2",
-                    labels={"degree": "Stupeň", "count": "Počet vrcholů"},
-                )
-                fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
-                st.plotly_chart(fig_deg_cmp, use_container_width=True)
+                    if entropy_deg_norm1 < 0.2:
+                        entropy_level1 = "velmi nízká"
+                        entropy_text1 = (
+                            "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované."
+                        )
+                    elif entropy_deg_norm1 < 0.4:
+                        entropy_level1 = "nízká"
+                        entropy_text1 = (
+                            "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené."
+                        )
+                    elif entropy_deg_norm1 < 0.6:
+                        entropy_level1 = "střední"
+                        entropy_text1 = (
+                            "Stupňové rozdělení je středně rozptýlené."
+                        )
+                    elif entropy_deg_norm1 < 0.8:
+                        entropy_level1 = "vysoká"
+                        entropy_text1 = (
+                            "Vrcholy mají rozmanitější stupně a rozdělení je výrazněji rozptýlené."
+                        )
+                    else:
+                        entropy_level1 = "velmi vysoká"
+                        entropy_text1 = (
+                            "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené."
+                        )
+
+                    # -----------------------------
+                    # Série 2 – stupňové rozdělení
+                    # -----------------------------
+                    unique_deg2, counts2 = np.unique(degs2, return_counts=True)
+                    pk2 = counts2 / counts2.sum()
+
+                    entropy_deg2 = -np.sum(pk2 * np.log(pk2))
+                    n_unique_deg2 = len(unique_deg2)
+                    if n_unique_deg2 > 1:
+                        entropy_deg_norm2 = entropy_deg2 / np.log(n_unique_deg2)
+                    else:
+                        entropy_deg_norm2 = 0.0
+
+                    if entropy_deg_norm2 < 0.2:
+                        entropy_level2 = "velmi nízká"
+                        entropy_text2 = (
+                            "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované."
+                        )
+                    elif entropy_deg_norm2 < 0.4:
+                        entropy_level2 = "nízká"
+                        entropy_text2 = (
+                            "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené."
+                        )
+                    elif entropy_deg_norm2 < 0.6:
+                        entropy_level2 = "střední"
+                        entropy_text2 = (
+                            "Stupňové rozdělení je středně rozptýlené."
+                        )
+                    elif entropy_deg_norm2 < 0.8:
+                        entropy_level2 = "vysoká"
+                        entropy_text2 = (
+                            "Vrcholy mají rozmanitější stupně a rozdělení je výrazněji rozptýlené."
+                        )
+                    else:
+                        entropy_level2 = "velmi vysoká"
+                        entropy_text2 = (
+                            "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené."
+                        )
+
+                    # -----------------------------
+                    # Metriky vedle sebe
+                    # -----------------------------
+                    col_deg_s1, col_deg_s2 = st.columns(2)
+
+                    with col_deg_s1:
+                        st.markdown("**Série 1 – základní metriky stupňového rozdělení**")
+                        m1, m2, m3, m4, m5 = st.columns(5)
+                        with m1:
+                            st.metric("Průměrný stupeň", f"{np.mean(degs1):.3f}")
+                        with m2:
+                            st.metric("Medián", f"{np.median(degs1):.3f}")
+                        with m3:
+                            st.metric("Maximum", f"{np.max(degs1)}")
+                        with m4:
+                            st.metric("Entropie", f"{entropy_deg1:.3f}")
+                        with m5:
+                            st.metric("Norm. entropie", f"{entropy_deg_norm1:.3f}", delta=entropy_level1)
+                        st.caption(f"Interpretace: {entropy_text1}")
+
+                    with col_deg_s2:
+                        st.markdown("**Série 2 – základní metriky stupňového rozdělení**")
+                        m1, m2, m3, m4, m5 = st.columns(5)
+                        with m1:
+                            st.metric("Průměrný stupeň", f"{np.mean(degs2):.3f}")
+                        with m2:
+                            st.metric("Medián", f"{np.median(degs2):.3f}")
+                        with m3:
+                            st.metric("Maximum", f"{np.max(degs2)}")
+                        with m4:
+                            st.metric("Entropie", f"{entropy_deg2:.3f}")
+                        with m5:
+                            st.metric("Norm. entropie", f"{entropy_deg_norm2:.3f}", delta=entropy_level2)
+                        st.caption(f"Interpretace: {entropy_text2}")
+
+                    # -----------------------------
+                    # Společný histogram
+                    # -----------------------------
+                    df_deg_cmp = pd.DataFrame(
+                        {
+                            "degree": degs1 + degs2,
+                            "serie": (["Série 1"] * len(degs1)) + (["Série 2"] * len(degs2)),
+                        }
+                    )
+
+                    max_deg = max(
+                        max(degs1) if len(degs1) > 0 else 1,
+                        max(degs2) if len(degs2) > 0 else 1,
+                    )
+
+                    fig_deg_cmp = px.histogram(
+                        df_deg_cmp,
+                        x="degree",
+                        color="serie",
+                        barmode="overlay",
+                        opacity=0.6,
+                        nbins=max_deg + 1,
+                        title="Histogram stupňů – série 1 vs. série 2",
+                        labels={"degree": "Stupeň", "count": "Počet vrcholů"},
+                    )
+                    fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
+                    st.plotly_chart(fig_deg_cmp, use_container_width=True)
 
             # =============================
             #  Arc Diagram HVG – obě série
