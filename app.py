@@ -1787,7 +1787,7 @@ if analysis_mode == "Časová řada → HVG":
             # =========================
             # PDF stupňového rozdělení
             # =========================
-            st.subheader("PDF stupňového rozdělení")
+            st.subheader("PDF stupňového rozdělení + power-law test")
 
             df_pdf = pd.DataFrame({"degree": unique_deg, "pk": pk})
 
@@ -1811,25 +1811,6 @@ if analysis_mode == "Časová řada → HVG":
                 "PDF (Probability Distribution Function) ukazuje pravděpodobnost, "
                 "že náhodně vybraný vrchol v HVG má právě stupeň k."
             )
-
-            # Power-law graf P(k) vs k (log–log)
-            df_power = pd.DataFrame({"degree": unique_deg, "pk": pk})
-
-            st.markdown("---")
-            
-            st.subheader("Log–log graf stupňového rozdělení")
-
-            fig_power = px.scatter(
-                df_power,
-                x="degree",
-                y="pk",
-                log_x=True,
-                log_y=True,
-                labels={"degree": "Stupeň k", "pk": "P(k)"},
-                title="Log–log graf P(k) vs. k",
-            )
-            fig_power.update_traces(mode="markers+lines")
-            st.plotly_chart(fig_power, use_container_width=True)
 
             # Volitelný formální power-law test + CCDF graf
             do_pl_test = st.checkbox(
