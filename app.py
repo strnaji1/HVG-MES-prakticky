@@ -381,15 +381,16 @@ def generate_hvg_summary_text(
     if sigma_sw is not None and not np.isnan(sigma_sw) and C is not None and not np.isnan(C):
         if sigma_sw > 1.1 and C >= 0.3:
             verdict_parts.append(
-                "Výsledný HVG lze interpretovat jako síť odpovídající strukturálně výrazné a relativně pravidelné časové řadě."
+                "Výsledný HVG ukazuje na výraznější strukturální organizaci časové řady. "
+                "Tento výsledek naznačuje přítomnost vnitřních vzorů, ale sám o sobě nerozlišuje mezi periodickým a chaotickým chováním."
             )
         elif sigma_sw < 1 and C < 0.2:
             verdict_parts.append(
-                "Výsledný HVG odpovídá spíše méně strukturované a variabilnější časové řadě."
+                "Výsledný HVG odpovídá spíše méně strukturované a variabilnější časové řadě, která může být bližší náhodnému chování."
             )
         else:
             verdict_parts.append(
-                "Výsledný HVG ukazuje středně výraznou strukturu časové řady bez extrémně pravidelného či zcela náhodného charakteru."
+                "Výsledný HVG ukazuje středně výraznou strukturu časové řady bez jednoznačně pravidelného ani zcela náhodného charakteru."
             )
 
     technical_text = " ".join(technical_parts)
@@ -1787,7 +1788,7 @@ if analysis_mode == "Časová řada → HVG":
             # =========================
             # PDF stupňového rozdělení
             # =========================
-            st.subheader("PDF stupňového rozdělení + power-law test")
+            st.subheader("PDF stupňového rozdělení")
 
             df_pdf = pd.DataFrame({"degree": unique_deg, "pk": pk})
 
@@ -1811,7 +1812,77 @@ if analysis_mode == "Časová řada → HVG":
                 "PDF (Probability Distribution Function) ukazuje pravděpodobnost, "
                 "že náhodně vybraný vrchol v HVG má právě stupeň k."
             )
+                        # =========================
+            # CDF stupňového rozdělení
+            # =========================
+            st.subheader("CDF stupňového rozdělení")
 
+            cdf_vals = np.cumsum(pk)
+            df_cdf = pd.DataFrame({"degree": unique_deg, "cdf": cdf_vals})
+
+            fig_cdf = px.line(
+                df_cdf,
+                x="degree",
+                y="cdf",
+                markers=True,
+                title="CDF stupňového rozdělení F(k)",
+                labels={"degree": "Stupeň k", "cdf": "F(k) = P(K ≤ k)"},
+            )
+
+            fig_cdf.update_layout(
+                xaxis_title="Stupeň k",
+                yaxis_title="Kumulativní pravděpodobnost F(k)",
+                yaxis_range=[0, 1.05],
+            )
+
+            st.plotly_chart(fig_cdf, use_container_width=True)
+
+            st.caption(
+                "CDF (Cumulative Distribution Function) ukazuje pravděpodobnost, "
+                "že náhodně vybraný vrchol v HVG má stupeň menší nebo roven k."
+            )
+                        # =========================
+            # Stručná interpretace rozdělení stupňů
+            # =========================
+            st.subheader("Stručná interpretace rozdělení stupňů")
+
+            interp_parts = []
+
+            # interpretace entropie
+            interp_parts.append(
+                f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm:.3f}**, "
+                f"což odpovídá kategorii **{entropy_level}**. {entropy_text}"
+            )
+
+            # interpretace podle max stupně a rozptylu stupňů
+            degree_range = np.max(degs) - np.min(degs)
+            if degree_range <= 2:
+                interp_parts.append(
+                    "Rozsah stupňů je poměrně malý, takže většina vrcholů má podobnou konektivitu."
+                )
+            elif degree_range <= 5:
+                interp_parts.append(
+                    "Rozsah stupňů je střední, což naznačuje kombinaci běžných i výrazněji propojených vrcholů."
+                )
+            else:
+                interp_parts.append(
+                    "Rozsah stupňů je poměrně široký, takže v síti existují jak slabě propojené, tak výrazně propojené vrcholy."
+                )
+
+            # interpretace PDF
+            peak_degree = unique_deg[np.argmax(pk)]
+            interp_parts.append(
+                f"PDF dosahuje maxima při stupni **k = {peak_degree}**, takže právě tento stupeň je v síti nejčastější."
+            )
+
+            # interpretace CDF
+            median_degree = np.median(degs)
+            interp_parts.append(
+                f"CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů; medián stupně je **{median_degree:.3f}**."
+            )
+
+            st.info(" ".join(interp_parts))
+            
             # Volitelný formální power-law test + CCDF graf
             do_pl_test = st.checkbox(
                 "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF"
@@ -3122,6 +3193,80 @@ else:  # "Porovnat dvě časové řady"
                         )
 
                     st.warning(" ".join(comparison_parts))
+                    
+                            # =============================
+                # Rozhodovací interpretace typu řad
+                # =============================
+                st.markdown("### Typ časových řad – interpretace")
+
+                def classify_series(avg_deg, C, sigma, entropy_norm):
+                    """
+                    Jednoduchá heuristická klasifikace typu časové řady
+                    podle vlastností HVG.
+                    """
+
+                    # ochrana proti None / NaN
+                    if C is None or sigma is None or np.isnan(C) or np.isnan(sigma):
+                        return "neurčitá", "Nedostatek informací pro spolehlivou klasifikaci."
+
+                    # pravidelná
+                    if entropy_norm < 0.3 and C > 0.5:
+                        return (
+                            "spíše pravidelná",
+                            "Nízká entropie a vysoký clustering naznačují pravidelnou nebo periodickou strukturu."
+                        )
+
+                    # náhodná / stochastická
+                    if entropy_norm > 0.7 and C < 0.3:
+                        return (
+                            "spíše stochastická",
+                            "Vysoká entropie a nízký clustering odpovídají náhodnému charakteru."
+                        )
+
+                    # komplexní / chaotická
+                    if sigma is not None and sigma > 1.2:
+                        return (
+                            "spíše komplexní / chaotická",
+                            "Výrazný small-world efekt spolu se strukturou sítě naznačuje komplexní nebo chaotické chování."
+                        )
+
+                    # fallback
+                    return (
+                        "neurčitá",
+                        "Vlastnosti leží mezi typickými kategoriemi, nelze jednoznačně klasifikovat."
+                    )
+
+
+                # klasifikace pro obě série
+                type1, reason1 = classify_series(avg_deg1, C1, sigma1, entropy_deg_norm1)
+                type2, reason2 = classify_series(avg_deg2, C2, sigma2, entropy_deg_norm2)
+
+                col_type1, col_type2 = st.columns(2)
+
+                with col_type1:
+                    st.markdown("**Série 1 – typ**")
+                    st.success(f"➡️ {type1}")
+                    st.caption(reason1)
+
+                with col_type2:
+                    st.markdown("**Série 2 – typ**")
+                    st.success(f"➡️ {type2}")
+                    st.caption(reason2)
+
+                # =============================
+                # Porovnání typů
+                # =============================
+                st.markdown("#### Porovnání charakteru sérií")
+
+                if type1 == type2:
+                    st.info(
+                        f"Obě časové řady vykazují podobný charakter: **{type1}**."
+                    )
+                else:
+                    st.warning(
+                        f"Série 1 je klasifikována jako **{type1}**, zatímco Série 2 jako **{type2}**."
+                    )
+                    
             # =============================
             # Propojení časová řada ↔ HVG (oboje)
             # =============================
@@ -3859,10 +4004,8 @@ else:  # "Porovnat dvě časové řady"
                     )
                     st.plotly_chart(fig_conf2, use_container_width=True)
 
-            # =============================
-            #  Porovnání stupňového rozdělení
-            # =============================
-                        # =============================
+
+                # =============================
                 #  Porovnání stupňového rozdělení
                 # =============================
                 if "Rozdělení stupňů + power-law" in selected_sections_cmp:
@@ -4009,6 +4152,406 @@ else:  # "Porovnat dvě časové řady"
                     fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
                     st.plotly_chart(fig_deg_cmp, use_container_width=True)
 
+                                # -----------------------------
+                    # PDF stupňového rozdělení – obě série
+                    # -----------------------------
+                    st.markdown("#### PDF stupňového rozdělení")
+
+                    col_pdf1, col_pdf2 = st.columns(2)
+
+                    with col_pdf1:
+                        df_pdf1 = pd.DataFrame({"degree": unique_deg1, "pk": pk1})
+                        fig_pdf1 = px.line(
+                            df_pdf1,
+                            x="degree",
+                            y="pk",
+                            markers=True,
+                            title="Série 1 – PDF P(k)",
+                            labels={"degree": "Stupeň k", "pk": "P(k)"},
+                        )
+                        fig_pdf1.update_layout(
+                            xaxis_title="Stupeň k",
+                            yaxis_title="Pravděpodobnost P(k)",
+                        )
+                        st.plotly_chart(fig_pdf1, use_container_width=True)
+
+                    with col_pdf2:
+                        df_pdf2 = pd.DataFrame({"degree": unique_deg2, "pk": pk2})
+                        fig_pdf2 = px.line(
+                            df_pdf2,
+                            x="degree",
+                            y="pk",
+                            markers=True,
+                            title="Série 2 – PDF P(k)",
+                            labels={"degree": "Stupeň k", "pk": "P(k)"},
+                        )
+                        fig_pdf2.update_layout(
+                            xaxis_title="Stupeň k",
+                            yaxis_title="Pravděpodobnost P(k)",
+                        )
+                        st.plotly_chart(fig_pdf2, use_container_width=True)
+
+                    st.caption(
+                        "PDF ukazuje pravděpodobnost, že náhodně vybraný vrchol má právě stupeň k."
+                    )
+
+                    # -----------------------------
+                    # CDF stupňového rozdělení – obě série
+                    # -----------------------------
+                    st.markdown("#### CDF stupňového rozdělení")
+
+                    cdf1 = np.cumsum(pk1)
+                    cdf2 = np.cumsum(pk2)
+
+                    col_cdf1, col_cdf2 = st.columns(2)
+
+                    with col_cdf1:
+                        df_cdf1 = pd.DataFrame({"degree": unique_deg1, "cdf": cdf1})
+                        fig_cdf1 = px.line(
+                            df_cdf1,
+                            x="degree",
+                            y="cdf",
+                            markers=True,
+                            title="Série 1 – CDF F(k)",
+                            labels={"degree": "Stupeň k", "cdf": "F(k)"},
+                        )
+                        fig_cdf1.update_layout(
+                            xaxis_title="Stupeň k",
+                            yaxis_title="Kumulativní pravděpodobnost F(k)",
+                        )
+                        st.plotly_chart(fig_cdf1, use_container_width=True)
+
+                    with col_cdf2:
+                        df_cdf2 = pd.DataFrame({"degree": unique_deg2, "cdf": cdf2})
+                        fig_cdf2 = px.line(
+                            df_cdf2,
+                            x="degree",
+                            y="cdf",
+                            markers=True,
+                            title="Série 2 – CDF F(k)",
+                            labels={"degree": "Stupeň k", "cdf": "F(k)"},
+                        )
+                        fig_cdf2.update_layout(
+                            xaxis_title="Stupeň k",
+                            yaxis_title="Kumulativní pravděpodobnost F(k)",
+                        )
+                        st.plotly_chart(fig_cdf2, use_container_width=True)
+
+                    st.caption(
+                        "CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů."
+                    )
+
+                    # -----------------------------
+                    # Stručné porovnání rozdělení
+                    # -----------------------------
+                    st.markdown("#### Stručná interpretace porovnání")
+
+                    comparison_deg_parts = []
+
+                    if entropy_deg_norm1 > entropy_deg_norm2:
+                        comparison_deg_parts.append(
+                            "Série 1 má vyšší normalizovanou entropii stupňového rozdělení než Série 2, takže její HVG vykazuje větší rozmanitost stupňů."
+                        )
+                    elif entropy_deg_norm2 > entropy_deg_norm1:
+                        comparison_deg_parts.append(
+                            "Série 2 má vyšší normalizovanou entropii stupňového rozdělení než Série 1, takže její HVG vykazuje větší rozmanitost stupňů."
+                        )
+                    else:
+                        comparison_deg_parts.append(
+                            "Obě série mají velmi podobnou normalizovanou entropii stupňového rozdělení."
+                        )
+
+                    peak_degree1 = unique_deg1[np.argmax(pk1)]
+                    peak_degree2 = unique_deg2[np.argmax(pk2)]
+
+                    comparison_deg_parts.append(
+                        f"Nejčastější stupeň je u Série 1 roven **{peak_degree1}** a u Série 2 roven **{peak_degree2}**."
+                    )
+
+                    range1 = np.max(degs1) - np.min(degs1)
+                    range2 = np.max(degs2) - np.min(degs2)
+
+                    if range1 > range2:
+                        comparison_deg_parts.append(
+                            "Série 1 má širší rozsah stupňů, což naznačuje větší rozdíly mezi slabě a silně propojenými vrcholy."
+                        )
+                    elif range2 > range1:
+                        comparison_deg_parts.append(
+                            "Série 2 má širší rozsah stupňů, což naznačuje větší rozdíly mezi slabě a silně propojenými vrcholy."
+                        )
+                    else:
+                        comparison_deg_parts.append(
+                            "Obě série mají podobný rozsah stupňů."
+                        )
+
+                    if np.median(degs1) > np.median(degs2):
+                        comparison_deg_parts.append(
+                            "Medián stupně je vyšší u Série 1, takže typický vrchol bývá o něco více propojený."
+                        )
+                    elif np.median(degs2) > np.median(degs1):
+                        comparison_deg_parts.append(
+                            "Medián stupně je vyšší u Série 2, takže typický vrchol bývá o něco více propojený."
+                        )
+                    else:
+                        comparison_deg_parts.append(
+                            "Typický vrchol má v obou sériích podobný stupeň."
+                        )
+
+                    st.info(" ".join(comparison_deg_parts))
+                    
+                    # -----------------------------
+                    # Formální power-law test + CCDF
+                    # -----------------------------
+                    st.markdown("#### Formální power-law test + CCDF")
+
+                    do_pl_test_cmp = st.checkbox(
+                        "🔍 Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
+                        key="cmp_powerlaw_test",
+                    )
+
+                    if do_pl_test_cmp:
+                        if not HAS_POWERLAW:
+                            st.warning(
+                                "K provedení testu je potřeba balík `powerlaw`. "
+                                "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
+                            )
+                        else:
+                            import powerlaw
+
+                            col_pl1, col_pl2 = st.columns(2)
+
+                            result_text_1 = None
+                            result_text_2 = None
+
+                            with col_pl1:
+                                st.markdown("**Série 1 – power-law analýza**")
+
+                                degs1_for_fit = np.array([d for d in degs1 if d > 0])
+
+                                if len(degs1_for_fit) < 10:
+                                    st.info(
+                                        "Série 1 má příliš málo vrcholů pro smysluplný power-law fit."
+                                    )
+                                else:
+                                    try:
+                                        fit1 = powerlaw.Fit(
+                                            degs1_for_fit,
+                                            discrete=True,
+                                            verbose=False,
+                                        )
+                                        alpha1 = fit1.power_law.alpha
+                                        xmin1 = fit1.power_law.xmin
+                                        R1, p1 = fit1.distribution_compare(
+                                            "power_law",
+                                            "exponential",
+                                        )
+
+                                        st.write(f"- Odhadnutý exponent α: **{alpha1:.3f}**")
+                                        st.write(f"- Odhadnuté k_min: **{xmin1}**")
+                                        st.write(f"- Likelihood ratio R: **{R1:.3f}**")
+                                        st.write(f"- p-hodnota: **{p1:.3f}**")
+
+                                        if p1 < 0.1:
+                                            if R1 > 0:
+                                                result_text_1 = "kompatibilní s power-law"
+                                                st.success(
+                                                    "Rozdělení je kompatibilní s power-law a power-law je preferovaný oproti exponenciálnímu rozdělení."
+                                                )
+                                            else:
+                                                result_text_1 = "spíše neodpovídá power-law"
+                                                st.warning(
+                                                    "Power-law model je horší než exponenciální rozdělení."
+                                                )
+                                        else:
+                                            result_text_1 = "neprůkazné"
+                                            st.info(
+                                                "Test je neprůkazný. Nelze spolehlivě rozhodnout."
+                                            )
+
+                                        # CCDF Série 1
+                                        unique_sorted1 = np.sort(np.unique(degs1_for_fit))
+                                        ccdf_vals1 = np.array(
+                                            [
+                                                np.sum(degs1_for_fit >= k) / len(degs1_for_fit)
+                                                for k in unique_sorted1
+                                            ]
+                                        )
+
+                                        mask1 = unique_sorted1 >= xmin1
+                                        if np.sum(mask1) >= 2:
+                                            k_emp1 = unique_sorted1[mask1]
+                                            ccdf_emp1 = ccdf_vals1[mask1]
+
+                                            k_theory1 = np.linspace(xmin1, k_emp1.max(), 100)
+                                            ccdf_theory1 = (k_theory1 / xmin1) ** (1 - alpha1)
+                                            ccdf_theory1 *= ccdf_emp1[0] / ccdf_theory1[0]
+
+                                            fig_ccdf1 = go.Figure()
+                                            fig_ccdf1.add_trace(
+                                                go.Scatter(
+                                                    x=k_emp1,
+                                                    y=ccdf_emp1,
+                                                    mode="markers",
+                                                    name="Empirická CCDF",
+                                                )
+                                            )
+                                            fig_ccdf1.add_trace(
+                                                go.Scatter(
+                                                    x=k_theory1,
+                                                    y=ccdf_theory1,
+                                                    mode="lines",
+                                                    name=f"Power-law fit (α={alpha1:.2f})",
+                                                )
+                                            )
+                                            fig_ccdf1.update_layout(
+                                                title="Série 1 – CCDF (log–log)",
+                                                xaxis_type="log",
+                                                yaxis_type="log",
+                                                xaxis_title="Stupeň k",
+                                                yaxis_title="P(K ≥ k)",
+                                                legend=dict(x=0.02, y=0.98),
+                                                margin=dict(b=40, l=50, r=10, t=50),
+                                            )
+                                            st.plotly_chart(fig_ccdf1, use_container_width=True)
+                                        else:
+                                            st.info(
+                                                "Tail rozdělení Série 1 je příliš krátký na smysluplný CCDF graf."
+                                            )
+
+                                    except Exception as e:
+                                        st.error(f"Nepodařilo se provést power-law fit pro Sérii 1: {e}")
+
+                            with col_pl2:
+                                st.markdown("**Série 2 – power-law analýza**")
+
+                                degs2_for_fit = np.array([d for d in degs2 if d > 0])
+
+                                if len(degs2_for_fit) < 10:
+                                    st.info(
+                                        "Série 2 má příliš málo vrcholů pro smysluplný power-law fit."
+                                    )
+                                else:
+                                    try:
+                                        fit2 = powerlaw.Fit(
+                                            degs2_for_fit,
+                                            discrete=True,
+                                            verbose=False,
+                                        )
+                                        alpha2 = fit2.power_law.alpha
+                                        xmin2 = fit2.power_law.xmin
+                                        R2, p2 = fit2.distribution_compare(
+                                            "power_law",
+                                            "exponential",
+                                        )
+
+                                        st.write(f"- Odhadnutý exponent α: **{alpha2:.3f}**")
+                                        st.write(f"- Odhadnuté k_min: **{xmin2}**")
+                                        st.write(f"- Likelihood ratio R: **{R2:.3f}**")
+                                        st.write(f"- p-hodnota: **{p2:.3f}**")
+
+                                        if p2 < 0.1:
+                                            if R2 > 0:
+                                                result_text_2 = "kompatibilní s power-law"
+                                                st.success(
+                                                    "Rozdělení je kompatibilní s power-law a power-law je preferovaný oproti exponenciálnímu rozdělení."
+                                                )
+                                            else:
+                                                result_text_2 = "spíše neodpovídá power-law"
+                                                st.warning(
+                                                    "Power-law model je horší než exponenciální rozdělení."
+                                                )
+                                        else:
+                                            result_text_2 = "neprůkazné"
+                                            st.info(
+                                                "Test je neprůkazný. Nelze spolehlivě rozhodnout."
+                                            )
+
+                                        # CCDF Série 2
+                                        unique_sorted2 = np.sort(np.unique(degs2_for_fit))
+                                        ccdf_vals2 = np.array(
+                                            [
+                                                np.sum(degs2_for_fit >= k) / len(degs2_for_fit)
+                                                for k in unique_sorted2
+                                            ]
+                                        )
+
+                                        mask2 = unique_sorted2 >= xmin2
+                                        if np.sum(mask2) >= 2:
+                                            k_emp2 = unique_sorted2[mask2]
+                                            ccdf_emp2 = ccdf_vals2[mask2]
+
+                                            k_theory2 = np.linspace(xmin2, k_emp2.max(), 100)
+                                            ccdf_theory2 = (k_theory2 / xmin2) ** (1 - alpha2)
+                                            ccdf_theory2 *= ccdf_emp2[0] / ccdf_theory2[0]
+
+                                            fig_ccdf2 = go.Figure()
+                                            fig_ccdf2.add_trace(
+                                                go.Scatter(
+                                                    x=k_emp2,
+                                                    y=ccdf_emp2,
+                                                    mode="markers",
+                                                    name="Empirická CCDF",
+                                                )
+                                            )
+                                            fig_ccdf2.add_trace(
+                                                go.Scatter(
+                                                    x=k_theory2,
+                                                    y=ccdf_theory2,
+                                                    mode="lines",
+                                                    name=f"Power-law fit (α={alpha2:.2f})",
+                                                )
+                                            )
+                                            fig_ccdf2.update_layout(
+                                                title="Série 2 – CCDF (log–log)",
+                                                xaxis_type="log",
+                                                yaxis_type="log",
+                                                xaxis_title="Stupeň k",
+                                                yaxis_title="P(K ≥ k)",
+                                                legend=dict(x=0.02, y=0.98),
+                                                margin=dict(b=40, l=50, r=10, t=50),
+                                            )
+                                            st.plotly_chart(fig_ccdf2, use_container_width=True)
+                                        else:
+                                            st.info(
+                                                "Tail rozdělení Série 2 je příliš krátký na smysluplný CCDF graf."
+                                            )
+
+                                    except Exception as e:
+                                        st.error(f"Nepodařilo se provést power-law fit pro Sérii 2: {e}")
+
+                            # -----------------------------
+                            # Srovnávací verdikt power-law
+                            # -----------------------------
+                            st.markdown("#### Porovnání power-law výsledků")
+
+                            compare_powerlaw_parts = []
+
+                            if result_text_1 is not None and result_text_2 is not None:
+                                compare_powerlaw_parts.append(
+                                    f"Série 1 je vyhodnocena jako **{result_text_1}**, zatímco Série 2 jako **{result_text_2}**."
+                                )
+
+                            if "alpha1" in locals() and "alpha2" in locals():
+                                if alpha1 > alpha2:
+                                    compare_powerlaw_parts.append(
+                                        "Série 1 má vyšší odhad exponentu α, takže tail jejího rozdělení klesá strměji."
+                                    )
+                                elif alpha2 > alpha1:
+                                    compare_powerlaw_parts.append(
+                                        "Série 2 má vyšší odhad exponentu α, takže tail jejího rozdělení klesá strměji."
+                                    )
+                                else:
+                                    compare_powerlaw_parts.append(
+                                        "Obě série mají velmi podobný odhad exponentu α."
+                                    )
+
+                            if not compare_powerlaw_parts:
+                                compare_powerlaw_parts.append(
+                                    "Power-law výsledky zatím nelze mezi sériemi smysluplně porovnat."
+                                )
+
+                            st.warning(" ".join(compare_powerlaw_parts))
+                            
             # =============================
             #  Arc Diagram HVG – obě série
             # =============================
