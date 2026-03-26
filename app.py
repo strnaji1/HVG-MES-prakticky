@@ -398,6 +398,115 @@ def generate_hvg_summary_text(
     verdict_text = " ".join(verdict_parts)
 
     return technical_text, interpretation_text, verdict_text   
+
+def classify_series_from_hvg(
+    C,
+    sigma_sw,
+    entropy_deg_norm,
+    powerlaw_p=None,
+    powerlaw_R=None,
+):
+    label = "Smíšená / neurčitá"
+    confidence = "nízká"
+    reason_parts = []
+    structure_parts = []
+    warning_text = (
+        "Tato klasifikace je orientační a vychází ze síťové reprezentace časové řady pomocí HVG. "
+        "Nejde o formální důkaz chaosu ani stochasticity."
+    )
+
+    # Lokální propojenost
+    if C is not None and not np.isnan(C):
+        if C < 0.2:
+            structure_parts.append("Síť má nízkou lokální propojenost.")
+        elif C < 0.35:
+            structure_parts.append("Síť má střední lokální propojenost.")
+        else:
+            structure_parts.append("Síť má vysokou lokální propojenost.")
+
+    # Small-world charakter
+    if sigma_sw is not None and not np.isnan(sigma_sw):
+        if sigma_sw < 1:
+            structure_parts.append("Síť nemá výrazný small-world charakter.")
+        elif sigma_sw < 1.2:
+            structure_parts.append("Síť je jen mírně odlišná od náhodného grafu.")
+        else:
+            structure_parts.append("Síť vykazuje výrazný small-world charakter.")
+
+    # Variabilita stupňů
+    if entropy_deg_norm < 0.35:
+        structure_parts.append("Variabilita stupňů je nízká.")
+    elif entropy_deg_norm < 0.65:
+        structure_parts.append("Variabilita stupňů je střední.")
+    else:
+        structure_parts.append("Variabilita stupňů je vysoká.")
+
+    # Hlavní heuristika
+    if C is not None and not np.isnan(C) and sigma_sw is not None and not np.isnan(sigma_sw):
+        if C >= 0.35 and entropy_deg_norm < 0.45:
+            label = "Spíše pravidelná / periodická"
+            confidence = "střední"
+            reason_parts.append(
+                "Vyšší clustering a nižší entropie ukazují na uspořádanější síť se podobnějšími stupni vrcholů."
+            )
+            reason_parts.append(
+                "To odpovídá spíše pravidelnému nebo periodickému charakteru časové řady."
+            )
+
+        elif C >= 0.25 and sigma_sw > 1.2 and 0.45 <= entropy_deg_norm <= 0.80:
+            label = "Spíše komplexní deterministická / chaotická"
+            confidence = "střední"
+            reason_parts.append(
+                "Vyšší clustering a výrazný small-world charakter ukazují na přítomnost vnitřní organizace."
+            )
+            reason_parts.append(
+                "Současně střední až vyšší entropie naznačuje, že síť není jednoduchá ani čistě pravidelná."
+            )
+            reason_parts.append(
+                "Tato kombinace odpovídá spíše komplexní nebo chaotické dynamice."
+            )
+
+        elif C < 0.20 and entropy_deg_norm >= 0.60:
+            label = "Spíše stochastická / náhodná"
+            confidence = "střední"
+            reason_parts.append(
+                "Nízká lokální propojenost a vyšší entropie ukazují na slabší organizovanost a větší rozptýlenost stupňového rozdělení."
+            )
+            reason_parts.append(
+                "To odpovídá spíše stochastickému nebo náhodnému charakteru časové řady."
+            )
+
+        else:
+            label = "Smíšená / neurčitá"
+            confidence = "nízká"
+            reason_parts.append("Metriky nevytvářejí zcela jednoznačný obraz.")
+            reason_parts.append(
+                "Řada může kombinovat strukturální i náhodné prvky, případně je z pohledu HVG obtížně zařaditelná."
+            )
+
+    # Power-law doplnění
+    if powerlaw_p is not None and powerlaw_R is not None:
+        if powerlaw_p < 0.1 and powerlaw_R > 0:
+            reason_parts.append(
+                "Tail stupňového rozdělení je kompatibilní s power-law, což ukazuje na heterogennější topologii sítě."
+            )
+        elif powerlaw_p < 0.1 and powerlaw_R < 0:
+            reason_parts.append(
+                "Power-law nebyl preferovaný před exponenciálním rozdělením, takže síť spíše nevykazuje scale-free charakter."
+            )
+        else:
+            reason_parts.append(
+                "Power-law test je neprůkazný, takže tail stupňového rozdělení nelze jednoznačně interpretovat."
+            )
+
+    return {
+        "label": label,
+        "confidence": confidence,
+        "reason_text": " ".join(reason_parts),
+        "structure_text": " ".join(structure_parts),
+        "warning_text": warning_text,
+    }
+
 # =========================
 #  Inicializace session state
 # =========================
@@ -995,6 +1104,15 @@ if analysis_mode == "Časová řada → HVG":
         n_edges = G.number_of_edges()
         degrees = [d for _, d in G.degree()]
         avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
+        unique_deg_all, counts_all = np.unique(degrees, return_counts=True)
+        pk_all = counts_all / counts_all.sum()
+
+        entropy_deg = -np.sum(pk_all * np.log(pk_all)) if len(pk_all) > 0 else 0.0
+
+        if len(unique_deg_all) > 1:
+            entropy_deg_norm = entropy_deg / np.log(len(unique_deg_all))
+        else:
+            entropy_deg_norm = 0.0
 
         # Clustering
         try:
@@ -1272,6 +1390,7 @@ if analysis_mode == "Časová řada → HVG":
                 aggregation_freq=aggregation_freq_used,
                 series_name=series_name,
             )
+            
 
             col_sum1, col_sum2, col_sum3 = st.columns(3)
 
@@ -1298,7 +1417,31 @@ if analysis_mode == "Časová řada → HVG":
 
             st.markdown("**Závěrečný verdikt**")
             st.success(verdict_text)
+            # =========================
+            # Orientační strukturální klasifikace řady
+            # =========================
+            classification = classify_series_from_hvg(
+                C=C,
+                sigma_sw=sigma_sw,
+                entropy_deg_norm=entropy_deg_norm,
+                powerlaw_p=powerlaw_p_result if "powerlaw_p_result" in locals() else None,
+                powerlaw_R=powerlaw_R_result if "powerlaw_R_result" in locals() else None,
+            )
 
+            st.markdown("**Orientační strukturální klasifikace časové řady**")
+            st.warning(
+                f"Nejpravděpodobnější charakter řady: **{classification['label']}** "
+                f"(jistota: **{classification['confidence']}**)"
+            )
+
+            st.markdown("**Zdůvodnění klasifikace**")
+            st.write(classification["reason_text"])
+
+            st.markdown("**Charakter sítě**")
+            st.write(classification["structure_text"])
+
+            st.caption(classification["warning_text"])
+            
         st.markdown("---")
 
         # ====== Zvýraznění v časové řadě (jen pokud je sekce propojení aktivní) ======
@@ -1812,7 +1955,10 @@ if analysis_mode == "Časová řada → HVG":
                 "PDF (Probability Distribution Function) ukazuje pravděpodobnost, "
                 "že náhodně vybraný vrchol v HVG má právě stupeň k."
             )
-                        # =========================
+            powerlaw_p_result = None
+            powerlaw_R_result = None
+
+            # =========================
             # CDF stupňového rozdělení
             # =========================
             st.subheader("CDF stupňového rozdělení")
@@ -1914,7 +2060,9 @@ if analysis_mode == "Časová řada → HVG":
 
                             # porovnání power-law vs. exponenciální rozdělení
                             R, p = fit.distribution_compare("power_law", "exponential")
-
+                            powerlaw_R_result = R
+                            powerlaw_p_result = p
+                            
                             st.markdown("**Výsledek power-law analýzy:**")
                             st.write(
                                 f"- Odhadnutý exponent \\(\\alpha\\): **{alpha:.3f}**"
