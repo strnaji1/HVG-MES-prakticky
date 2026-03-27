@@ -173,6 +173,7 @@ def load_csv_series(
 
             return df, data, meta, None
 
+        
         # =========================
         # Bez datového sloupce
         # =========================
@@ -1171,13 +1172,13 @@ if analysis_mode == "Časová řada → HVG":
         # ---- Přehledné přepínání sekcí pod HVG ----
         section_options = [
             "Metriky HVG",
-            "Shrnutí analýzy",
             "Propojení časová řada ↔ HVG",
             "Lokální analýza úseku časové řady",
             "Podgraf HVG",
             "Rozdělení stupňů + power-law",
             "Arc Diagram HVG",
             "Konfigurační graf (null model)",
+            "Shrnutí analýzy",
             "Export HVG a metrik",
         ]
         selected_sections = st.multiselect(
@@ -1191,13 +1192,14 @@ if analysis_mode == "Časová řada → HVG":
                 "Export HVG a metrik",
             ],
         )
+        
         do_powerlaw_global = False
         if "Rozdělení stupňů + power-law" in selected_sections:
             do_powerlaw_global = st.checkbox(
                 "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
                 key="powerlaw_main_global",
-            )
-
+            )   
+           
         # ====== Analytické statistiky HVG (počítáme vždy, ale zobrazíme jen pokud chceš) ======
         n_nodes = G.number_of_nodes()
         n_edges = G.number_of_edges()
@@ -1552,101 +1554,7 @@ if analysis_mode == "Časová řada → HVG":
                         "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
                     )
 
-        # ====== Shrnutí analýzy ======
-        if "Shrnutí analýzy" in selected_sections:
-            st.subheader("Shrnutí analýzy")
-
-            series_name = st.session_state.get("series_name", None)
-            is_normalized = st.session_state.get("series_normalized", False)
-            aggregation_freq_used = st.session_state.get("series_aggregation", None)
-
-            technical_text, interpretation_text, verdict_text = generate_hvg_summary_text(
-                n_nodes=n_nodes,
-                n_edges=n_edges,
-                avg_deg=avg_deg,
-                C=C,
-                L=L,
-                sigma_sw=sigma_sw,
-                assort=assort,
-                is_normalized=is_normalized,
-                aggregation_freq=aggregation_freq_used,
-                series_name=series_name,
-            )
-            
-
-            col_sum1, col_sum2, col_sum3 = st.columns(3)
-
-            with col_sum1:
-                st.metric("Počet vrcholů", n_nodes)
-                st.metric("Počet hran", n_edges)
-
-            with col_sum2:
-                st.metric("Průměrný stupeň", f"{avg_deg:.3f}")
-                st.metric("Clustering", f"{C:.3f}" if not np.isnan(C) else "N/A")
-
-            with col_sum3:
-                st.metric("Průměrná délka cesty", f"{L:.3f}" if L is not None else "N/A")
-                st.metric(
-                    "Small-world index σ",
-                    f"{sigma_sw:.2f}" if sigma_sw is not None and not np.isnan(sigma_sw) else "N/A"
-                )
-
-            st.markdown("**Technické shrnutí**")
-            st.info(technical_text)
-
-            st.markdown("**Interpretace časové řady**")
-            st.write(interpretation_text)
-
-            st.markdown("**Závěrečný verdikt**")
-            st.success(verdict_text)
-            # =========================
-            # Orientační strukturální klasifikace řady
-            # =========================
-            classification = classify_series_from_hvg(
-                avg_deg=avg_deg,
-                C=C,
-                L=L,
-                sigma_sw=sigma_sw,
-                assort=assort,
-                entropy_deg_norm=entropy_deg_norm_global,
-                powerlaw_p=powerlaw_p_result,
-                powerlaw_R=powerlaw_R_result,
-                C_rand=C_rand,
-                L_rand=L_rand,
-                sigma_conf=sigma_conf,
-            )
-
-            st.markdown("**Orientační strukturální klasifikace časové řady**")
-            st.warning(
-                f"Nejpravděpodobnější charakter řady: **{classification['label']}** "
-                f"(jistota: **{classification['confidence']}**)"
-            )
-
-            st.markdown("**Zdůvodnění klasifikace**")
-            st.write(classification["reason_text"])
-
-            st.markdown("**Charakter sítě**")
-            st.write(classification["structure_text"])
-            
-            st.markdown("**Skóre jednotlivých interpretací**")
-            score_col1, score_col2, score_col3 = st.columns(3)
-
-            with score_col1:
-                st.metric("Pravidelná / periodická", classification["scores"]["Spíše pravidelná / periodická"])
-
-            with score_col2:
-                st.metric("Komplexní / chaotická", classification["scores"]["Spíše komplexní deterministická / chaotická"])
-
-            with score_col3:
-                st.metric("Stochastická / náhodná", classification["scores"]["Spíše stochastická / náhodná"])
-            
-            st.caption(
-                "Vyšší skóre znamená, že více síťových metrik podporuje daný typ interpretace. "
-                "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
-            )
-            st.caption(classification["warning_text"])
-            
-        st.markdown("---")
+       
 
         # ====== Zvýraznění v časové řadě (jen pokud je sekce propojení aktivní) ======
         if "Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
@@ -2133,48 +2041,12 @@ if analysis_mode == "Časová řada → HVG":
                 "CDF (Cumulative Distribution Function) ukazuje pravděpodobnost, "
                 "že náhodně vybraný vrchol v HVG má stupeň menší nebo roven k."
             )
+            
             # =========================
-            # Stručná interpretace rozdělení stupňů
+            # CCDF + power-law test(log-log graf)
             # =========================
-            st.subheader("Stručná interpretace rozdělení stupňů")
 
-            interp_parts = []
-
-            # interpretace entropie
-            interp_parts.append(
-                f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm:.3f}**, "
-                f"což odpovídá kategorii **{entropy_level}**. {entropy_text}"
-            )
-
-            # interpretace podle max stupně a rozptylu stupňů
-            degree_range = np.max(degs) - np.min(degs)
-            if degree_range <= 2:
-                interp_parts.append(
-                    "Rozsah stupňů je poměrně malý, takže většina vrcholů má podobnou konektivitu."
-                )
-            elif degree_range <= 5:
-                interp_parts.append(
-                    "Rozsah stupňů je střední, což naznačuje kombinaci běžných i výrazněji propojených vrcholů."
-                )
-            else:
-                interp_parts.append(
-                    "Rozsah stupňů je poměrně široký, takže v síti existují jak slabě propojené, tak výrazně propojené vrcholy."
-                )
-
-            # interpretace PDF
-            peak_degree = unique_deg[np.argmax(pk)]
-            interp_parts.append(
-                f"PDF dosahuje maxima při stupni **k = {peak_degree}**, takže právě tento stupeň je v síti nejčastější."
-            )
-
-            # interpretace CDF
-            median_degree = np.median(degs)
-            interp_parts.append(
-                f"CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů; medián stupně je **{median_degree:.3f}**."
-            )
-
-            st.info(" ".join(interp_parts))
-
+        if "Rozdělení stupňů + power-law" in selected_sections:
             if do_powerlaw_global:
                 if not HAS_POWERLAW:
                     st.warning(
@@ -2286,6 +2158,143 @@ if analysis_mode == "Časová řada → HVG":
                                 "Tail rozdělení (k ≥ k_min) je příliš krátký na smysluplný CCDF graf."
                             )
 
+            # =========================
+            # Stručná interpretace rozdělení stupňů
+            # =========================
+            st.subheader("Stručná interpretace rozdělení stupňů")
+
+            interp_parts = []
+
+            # interpretace entropie
+            interp_parts.append(
+                f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm:.3f}**, "
+                f"což odpovídá kategorii **{entropy_level}**. {entropy_text}"
+            )
+
+            # interpretace podle max stupně a rozptylu stupňů
+            degree_range = np.max(degs) - np.min(degs)
+            if degree_range <= 2:
+                interp_parts.append(
+                    "Rozsah stupňů je poměrně malý, takže většina vrcholů má podobnou konektivitu."
+                )
+            elif degree_range <= 5:
+                interp_parts.append(
+                    "Rozsah stupňů je střední, což naznačuje kombinaci běžných i výrazněji propojených vrcholů."
+                )
+            else:
+                interp_parts.append(
+                    "Rozsah stupňů je poměrně široký, takže v síti existují jak slabě propojené, tak výrazně propojené vrcholy."
+                )
+
+            # interpretace PDF
+            peak_degree = unique_deg[np.argmax(pk)]
+            interp_parts.append(
+                f"PDF dosahuje maxima při stupni **k = {peak_degree}**, takže právě tento stupeň je v síti nejčastější."
+            )
+
+            # interpretace CDF
+            median_degree = np.median(degs)
+            interp_parts.append(
+                f"CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů; medián stupně je **{median_degree:.3f}**."
+            )
+
+            st.info(" ".join(interp_parts))
+
+         # ====== Shrnutí analýzy ======
+        if "Shrnutí analýzy" in selected_sections:
+            st.subheader("Shrnutí analýzy")
+
+            series_name = st.session_state.get("series_name", None)
+            is_normalized = st.session_state.get("series_normalized", False)
+            aggregation_freq_used = st.session_state.get("series_aggregation", None)
+
+            technical_text, interpretation_text, verdict_text = generate_hvg_summary_text(
+                n_nodes=n_nodes,
+                n_edges=n_edges,
+                avg_deg=avg_deg,
+                C=C,
+                L=L,
+                sigma_sw=sigma_sw,
+                assort=assort,
+                is_normalized=is_normalized,
+                aggregation_freq=aggregation_freq_used,
+                series_name=series_name,
+            )
+            
+
+            col_sum1, col_sum2, col_sum3 = st.columns(3)
+
+            with col_sum1:
+                st.metric("Počet vrcholů", n_nodes)
+                st.metric("Počet hran", n_edges)
+
+            with col_sum2:
+                st.metric("Průměrný stupeň", f"{avg_deg:.3f}")
+                st.metric("Clustering", f"{C:.3f}" if not np.isnan(C) else "N/A")
+
+            with col_sum3:
+                st.metric("Průměrná délka cesty", f"{L:.3f}" if L is not None else "N/A")
+                st.metric(
+                    "Small-world index σ",
+                    f"{sigma_sw:.2f}" if sigma_sw is not None and not np.isnan(sigma_sw) else "N/A"
+                )
+
+            st.markdown("**Technické shrnutí**")
+            st.info(technical_text)
+
+            st.markdown("**Interpretace časové řady**")
+            st.write(interpretation_text)
+
+            st.markdown("**Závěrečný verdikt**")
+            st.success(verdict_text)
+            # =========================
+            # Orientační strukturální klasifikace řady
+            # =========================
+            classification = classify_series_from_hvg(
+                avg_deg=avg_deg,
+                C=C,
+                L=L,
+                sigma_sw=sigma_sw,
+                assort=assort,
+                entropy_deg_norm=entropy_deg_norm_global,
+                powerlaw_p=powerlaw_p_result,
+                powerlaw_R=powerlaw_R_result,
+                C_rand=C_rand,
+                L_rand=L_rand,
+                sigma_conf=sigma_conf,
+            )
+
+            st.markdown("**Orientační strukturální klasifikace časové řady**")
+            st.warning(
+                f"Nejpravděpodobnější charakter řady: **{classification['label']}** "
+                f"(jistota: **{classification['confidence']}**)"
+            )
+
+            st.markdown("**Zdůvodnění klasifikace**")
+            st.write(classification["reason_text"])
+
+            st.markdown("**Charakter sítě**")
+            st.write(classification["structure_text"])
+            
+            st.markdown("**Skóre jednotlivých interpretací**")
+            score_col1, score_col2, score_col3 = st.columns(3)
+
+            with score_col1:
+                st.metric("Pravidelná / periodická", classification["scores"]["Spíše pravidelná / periodická"])
+
+            with score_col2:
+                st.metric("Komplexní / chaotická", classification["scores"]["Spíše komplexní deterministická / chaotická"])
+
+            with score_col3:
+                st.metric("Stochastická / náhodná", classification["scores"]["Spíše stochastická / náhodná"])
+            
+            st.caption(
+                "Vyšší skóre znamená, že více síťových metrik podporuje daný typ interpretace. "
+                "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
+            )
+            st.caption(classification["warning_text"])
+            
+        st.markdown("---")    
 
         # =========================
         #  Arc diagram HVG
@@ -3321,17 +3330,13 @@ else:  # "Porovnat dvě časové řady"
 
                 st.plotly_chart(fig1, use_container_width=True)
 
-                if st.button("HVG linky (vodorovné) – Série 1", key="btn_cmp_horiz1"):
-                    st.session_state.show_cmp_horiz1 = not st.session_state.show_cmp_horiz1
-                    st.rerun()
-
             with col_series2:
                 st.markdown("### Série 2 – nastavená v levém panelu")
-                st.write(f"- Délka: **{len(data2)}**")
 
                 if meta2_saved is not None and meta2_saved.get("normalized", False):
                     st.write(
-                        f"- Původní průměr: **{meta2_saved['original_mean']:.3f}**, "
+                        f"- Délka: **{len(data2)}**, "
+                        f"Původní průměr: **{meta2_saved['original_mean']:.3f}**, "
                         f"Původní rozptyl: **{meta2_saved['original_var']:.3f}**"
                     )
                     st.write(
@@ -3340,7 +3345,8 @@ else:  # "Porovnat dvě časové řady"
                     )
                 else:
                     st.write(
-                        f"- Průměr: **{data2.mean():.3f}**, "
+                        f"- Délka: **{len(data2)}**, "
+                        f"Průměr: **{data2.mean():.3f}**, "
                         f"Rozptyl: **{data2.var():.3f}**"
                     )
 
@@ -3366,22 +3372,30 @@ else:  # "Porovnat dvě časové řady"
 
                 st.plotly_chart(fig2, use_container_width=True)
 
+            # tlačítka v jednom samostatném řádku
+            btn_col1, btn_col2 = st.columns(2)
+
+            with btn_col1:
+                if st.button("HVG linky (vodorovné) – Série 1", key="btn_cmp_horiz1"):
+                    st.session_state.show_cmp_horiz1 = not st.session_state.show_cmp_horiz1
+                    st.rerun()
+
+            with btn_col2:
                 if st.button("HVG linky (vodorovné) – Série 2", key="btn_cmp_horiz2"):
                     st.session_state.show_cmp_horiz2 = not st.session_state.show_cmp_horiz2
-                    st.rerun()    
-            
+                    st.rerun()
             # =============================
             # Společný výběr sekcí pro obě HVG
             # =============================
             section_options_cmp = [
                 "Metriky HVG",
-                "Shrnutí analýzy",
                 "Propojení časová řada ↔ HVG",
                 "Lokální analýza úseku časové řady",
                 "Podgraf HVG",
                 "Rozdělení stupňů + power-law",
                 "Arc Diagram HVG",
                 "Konfigurační graf (null model)",
+                "Shrnutí analýzy",
                 "Export HVG a metrik",
             ]
             selected_sections_cmp = st.multiselect(
@@ -3389,60 +3403,7 @@ else:  # "Porovnat dvě časové řady"
                 options=section_options_cmp,
                 default=section_options_cmp,  # všechno defaultně
             )
-            do_powerlaw_cmp = False
-            if "Rozdělení stupňů + power-law" in selected_sections_cmp:
-                do_powerlaw_cmp = st.checkbox(
-                    "🔍 Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
-                    key="cmp_powerlaw_global",
-                )
-            alpha1 = None
-            alpha2 = None
-            xmin1 = None
-            xmin2 = None
-
-            if do_powerlaw_cmp and HAS_POWERLAW:
-                try:
-                    import powerlaw
-
-                    degs1_for_fit_pre = np.array([d for d in degs1 if d > 0])
-                    if len(degs1_for_fit_pre) >= 10:
-                        fit1_pre = powerlaw.Fit(
-                            degs1_for_fit_pre,
-                            discrete=True,
-                            verbose=False,
-                        )
-                        alpha1 = fit1_pre.power_law.alpha
-                        xmin1 = fit1_pre.power_law.xmin
-                        R1_pre, p1_pre = fit1_pre.distribution_compare(
-                            "power_law", "exponential"
-                        )
-                        powerlaw_R_result_1 = R1_pre
-                        powerlaw_p_result_1 = p1_pre
-
-                    degs2_for_fit_pre = np.array([d for d in degs2 if d > 0])
-                    if len(degs2_for_fit_pre) >= 10:
-                        fit2_pre = powerlaw.Fit(
-                            degs2_for_fit_pre,
-                            discrete=True,
-                            verbose=False,
-                        )
-                        alpha2 = fit2_pre.power_law.alpha
-                        xmin2 = fit2_pre.power_law.xmin
-                        R2_pre, p2_pre = fit2_pre.distribution_compare(
-                            "power_law", "exponential"
-                        )
-                        powerlaw_R_result_2 = R2_pre
-                        powerlaw_p_result_2 = p2_pre
-
-                except Exception:
-                    powerlaw_R_result_1 = None
-                    powerlaw_p_result_1 = None
-                    powerlaw_R_result_2 = None
-                    powerlaw_p_result_2 = None
-                    alpha1 = None
-                    alpha2 = None
-                    xmin1 = None
-                    xmin2 = None
+            
 
             # =============================
             # HVG vizualizace vedle sebe
@@ -3601,222 +3562,7 @@ else:  # "Porovnat dvě časové řady"
                         else:
                             st.info(msg2)
                 
-            # =============================
-            # Shrnutí analýzy pro obě série
-            # =============================
-            if "Shrnutí analýzy" in selected_sections_cmp:
-                st.markdown("### Shrnutí analýzy")
-
-                tech1, interp1, verdict1 = generate_hvg_summary_text(
-                    n_nodes=n1,
-                    n_edges=m1,
-                    avg_deg=avg_deg1,
-                    C=C1,
-                    L=L1,
-                    sigma_sw=sigma1,
-                    assort=assort1,
-                    is_normalized=st.session_state.get("series_normalized", False),
-                    aggregation_freq=st.session_state.get("series_aggregation", None),
-                    series_name=st.session_state.get("series_name", "Série 1"),
-                )
-
-                tech2, interp2, verdict2 = generate_hvg_summary_text(
-                    n_nodes=n2,
-                    n_edges=m2,
-                    avg_deg=avg_deg2,
-                    C=C2,
-                    L=L2,
-                    sigma_sw=sigma2,
-                    assort=assort2,
-                    is_normalized=st.session_state.get("series_normalized2", False),
-                    aggregation_freq=st.session_state.get("series_aggregation2", None),
-                    series_name=st.session_state.get("series_name2", "Série 2"),
-                )
-                classification1 = classify_series_from_hvg(
-                    avg_deg=avg_deg1,
-                    C=C1,
-                    L=L1,
-                    sigma_sw=sigma1,
-                    assort=assort1,
-                    entropy_deg_norm=entropy_deg_norm1,
-                    powerlaw_p=powerlaw_p_result_1,
-                    powerlaw_R=powerlaw_R_result_1,
-                    C_rand=C_rand1,
-                    L_rand=L_rand1,
-                    sigma_conf=sigma1c,
-                )
-
-                classification2 = classify_series_from_hvg(
-                    avg_deg=avg_deg2,
-                    C=C2,
-                    L=L2,
-                    sigma_sw=sigma2,
-                    assort=assort2,
-                    entropy_deg_norm=entropy_deg_norm2,
-                    powerlaw_p=powerlaw_p_result_2,
-                    powerlaw_R=powerlaw_R_result_2,
-                    C_rand=C_rand2,
-                    L_rand=L_rand2,
-                    sigma_conf=sigma2c,
-                )
-
-                col_s1, col_s2 = st.columns(2)
-
-                with col_s1:
-                    st.markdown("## Série 1")
-                    st.markdown("**Technické shrnutí**")
-                    st.info(tech1)
-
-                    st.markdown("**Interpretace časové řady**")
-                    st.write(interp1)
-
-                    st.markdown("**Orientační klasifikace**")
-                    st.success(
-                        f"**{classification1['label']}** "
-                        f"(jistota: **{classification1['confidence']}**)"
-                    )
-                    st.write(classification1["reason_text"])
-
-                    st.markdown("**Charakter sítě**")
-                    st.caption(classification1["structure_text"])
-
-                    st.markdown("**Závěrečný verdikt**")
-                    st.warning(verdict1)
-                    st.markdown("**Skóre jednotlivých interpretací**")
-                    score1_col1, score1_col2, score1_col3 = st.columns(3)
-
-                    with score1_col1:
-                        st.metric("Pravidelná / periodická", classification1["scores"]["Spíše pravidelná / periodická"])
-                    with score1_col2:
-                        st.metric("Komplexní / chaotická", classification1["scores"]["Spíše komplexní deterministická / chaotická"])
-                    with score1_col3:
-                        st.metric("Stochastická / náhodná", classification1["scores"]["Spíše stochastická / náhodná"])
-
-                    st.caption(classification1["warning_text"])
-                with col_s2:
-                    st.markdown("## Série 2")
-                    st.markdown("**Technické shrnutí**")
-                    st.info(tech2)
-
-                    st.markdown("**Interpretace časové řady**")
-                    st.write(interp2)
-
-                    st.markdown("**Orientační klasifikace**")
-                    st.success(
-                        f"**{classification2['label']}** "
-                        f"(jistota: **{classification2['confidence']}**)"
-                    )
-                    st.write(classification2["reason_text"])
-
-                    st.markdown("**Charakter sítě**")
-                    st.caption(classification2["structure_text"])
-
-                    st.markdown("**Závěrečný verdikt**")
-                    st.warning(verdict2)
-                    st.markdown("**Skóre jednotlivých interpretací**")
-                    score2_col1, score2_col2, score2_col3 = st.columns(3)
-
-                    with score2_col1:
-                        st.metric("Pravidelná / periodická", classification2["scores"]["Spíše pravidelná / periodická"])
-                    with score2_col2:
-                        st.metric("Komplexní / chaotická", classification2["scores"]["Spíše komplexní deterministická / chaotická"])
-                    with score2_col3:
-                        st.metric("Stochastická / náhodná", classification2["scores"]["Spíše stochastická / náhodná"])
-
-                    st.caption(classification2["warning_text"])                    
-                st.markdown("---")
-                st.markdown("## Porovnání sérií") 
-                
-                comparison_parts = []
-
-                if not np.isnan(C1) and not np.isnan(C2):
-                    if C1 > C2:
-                        comparison_parts.append(
-                            "Série 1 vykazuje vyšší lokální propojenost než Série 2."
-                        )
-                    elif C2 > C1:
-                        comparison_parts.append(
-                            "Série 2 vykazuje vyšší lokální propojenost než Série 1."
-                        )
-                    else:
-                        comparison_parts.append(
-                            "Obě série mají podobnou lokální propojenost."
-                        )
-
-                if sigma1 is not None and sigma2 is not None and not np.isnan(sigma1) and not np.isnan(sigma2):
-                    if sigma1 > sigma2:
-                        comparison_parts.append(
-                            "Z hlediska small-world indexu je Série 1 strukturálně výraznější."
-                        )
-                    elif sigma2 > sigma1:
-                        comparison_parts.append(
-                            "Z hlediska small-world indexu je Série 2 strukturálně výraznější."
-                        )
-                    else:
-                        comparison_parts.append(
-                            "Obě série mají podobný small-world charakter."
-                        )
-
-                if avg_deg1 > avg_deg2:
-                    comparison_parts.append(
-                        "HVG Série 1 je v průměru propojenější než HVG Série 2."
-                    )
-                elif avg_deg2 > avg_deg1:
-                    comparison_parts.append(
-                        "HVG Série 2 je v průměru propojenější než HVG Série 1."
-                    )
-                else:
-                    comparison_parts.append(
-                        "Obě HVG mají podobnou průměrnou propojenost."
-                    )
-
-                if entropy_deg_norm1 > entropy_deg_norm2:
-                    comparison_parts.append(
-                        "Série 1 má vyšší variabilitu stupňového rozdělení než Série 2."
-                    )
-                elif entropy_deg_norm2 > entropy_deg_norm1:
-                    comparison_parts.append(
-                        "Série 2 má vyšší variabilitu stupňového rozdělení než Série 1."
-                    )
-                else:
-                    comparison_parts.append(
-                        "Obě série mají podobnou variabilitu stupňového rozdělení."
-                    )
-
-                st.markdown("**Strukturální porovnání**")
-                st.info(" ".join(comparison_parts))   
-                
-                st.markdown("**Porovnání charakteru časových řad**")
-
-                if classification1["label"] == classification2["label"]:
-                    st.success(
-                        f"Obě časové řady vykazují podobný orientační charakter: "
-                        f"**{classification1['label']}**."
-                    )
-                else:
-                    st.warning(
-                        f"Série 1 je orientačně klasifikována jako **{classification1['label']}**, "
-                        f"zatímco Série 2 jako **{classification2['label']}**."
-                    )
-                best_score_1 = max(classification1["scores"].values())
-                best_score_2 = max(classification2["scores"].values())
-
-                if best_score_1 > best_score_2:
-                    st.info(
-                        "Série 1 vykazuje silnější podporu pro svou dominantní interpretaci než Série 2."
-                    )
-                elif best_score_2 > best_score_1:
-                    st.info(
-                        "Série 2 vykazuje silnější podporu pro svou dominantní interpretaci než Série 1."
-                    )
-                else:
-                    st.info(
-                        "Obě série mají podobně silnou podporu pro svou dominantní interpretaci."
-                    )
-                st.caption(
-                    "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
-                    "small-world charakteru a variability stupňového rozdělení."
-                )
+           
                    
             # =============================
             # Propojení časová řada ↔ HVG (oboje)
@@ -4482,7 +4228,7 @@ else:  # "Porovnat dvě časové řady"
             # =============================
             if "Rozdělení stupňů + power-law" in selected_sections_cmp:
                 st.markdown("### Porovnání stupňového rozdělení")
-
+                
                 # -----------------------------
                 # Série 1 – stupňové rozdělení
                 # -----------------------------
@@ -4568,33 +4314,31 @@ else:  # "Porovnat dvě časové řady"
 
                 with col_deg_s1:
                     st.markdown("**Série 1 – základní metriky stupňového rozdělení**")
-                    m1, m2, m3, m4, m5 = st.columns(5)
-                    with m1:
+                    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+                    with metric_col1:
                         st.metric("Průměrný stupeň", f"{np.mean(degs1):.3f}")
-                    with m2:
+                    with metric_col2:
                         st.metric("Medián", f"{np.median(degs1):.3f}")
-                    with m3:
+                    with metric_col3:
                         st.metric("Maximum", f"{np.max(degs1)}")
-                    with m4:
+                    with metric_col4:
                         st.metric("Entropie", f"{entropy_deg1:.3f}")
-                    with m5:
+                    with metric_col5:
                         st.metric("Norm. entropie", f"{entropy_deg_norm1:.3f}", delta=entropy_level1)
-                    st.caption(f"Interpretace: {entropy_text1}")
 
                 with col_deg_s2:
                     st.markdown("**Série 2 – základní metriky stupňového rozdělení**")
-                    m1, m2, m3, m4, m5 = st.columns(5)
-                    with m1:
+                    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+                    with metric_col1:
                         st.metric("Průměrný stupeň", f"{np.mean(degs2):.3f}")
-                    with m2:
+                    with metric_col2:
                         st.metric("Medián", f"{np.median(degs2):.3f}")
-                    with m3:
+                    with metric_col3:
                         st.metric("Maximum", f"{np.max(degs2)}")
-                    with m4:
+                    with metric_col4:
                         st.metric("Entropie", f"{entropy_deg2:.3f}")
-                    with m5:
+                    with metric_col5:
                         st.metric("Norm. entropie", f"{entropy_deg_norm2:.3f}", delta=entropy_level2)
-                    st.caption(f"Interpretace: {entropy_text2}")
 
                 # -----------------------------
                 # Společný histogram
@@ -4713,6 +4457,64 @@ else:  # "Porovnat dvě časové řady"
                     "CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů."
                 )
 
+                                # -----------------------------
+                # Formální power-law test + CCDF
+                # -----------------------------
+                st.markdown("#### Formální power-law test + CCDF")
+                do_powerlaw_cmp = st.checkbox(
+                "🔍 Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
+                key="cmp_powerlaw_global",
+                )
+
+                alpha1 = None
+                alpha2 = None
+                xmin1 = None
+                xmin2 = None
+
+                if do_powerlaw_cmp and HAS_POWERLAW:
+                    try:
+                        import powerlaw
+
+                        degs1_for_fit_pre = np.array([d for d in degs1 if d > 0])
+                        if len(degs1_for_fit_pre) >= 10:
+                            fit1_pre = powerlaw.Fit(
+                                degs1_for_fit_pre,
+                                discrete=True,
+                                verbose=False,
+                            )
+                            alpha1 = fit1_pre.power_law.alpha
+                            xmin1 = fit1_pre.power_law.xmin
+                            R1_pre, p1_pre = fit1_pre.distribution_compare(
+                                "power_law", "exponential"
+                            )
+                            powerlaw_R_result_1 = R1_pre
+                            powerlaw_p_result_1 = p1_pre
+
+                        degs2_for_fit_pre = np.array([d for d in degs2 if d > 0])
+                        if len(degs2_for_fit_pre) >= 10:
+                            fit2_pre = powerlaw.Fit(
+                                degs2_for_fit_pre,
+                                discrete=True,
+                                verbose=False,
+                            )
+                            alpha2 = fit2_pre.power_law.alpha
+                            xmin2 = fit2_pre.power_law.xmin
+                            R2_pre, p2_pre = fit2_pre.distribution_compare(
+                                "power_law", "exponential"
+                            )
+                            powerlaw_R_result_2 = R2_pre
+                            powerlaw_p_result_2 = p2_pre
+
+                    except Exception:
+                        powerlaw_R_result_1 = None
+                        powerlaw_p_result_1 = None
+                        powerlaw_R_result_2 = None
+                        powerlaw_p_result_2 = None
+                        alpha1 = None
+                        alpha2 = None
+                        xmin1 = None
+                        xmin2 = None
+
                 # -----------------------------
                 # Stručné porovnání rozdělení
                 # -----------------------------
@@ -4771,10 +4573,7 @@ else:  # "Porovnat dvě časové řady"
 
                 st.info(" ".join(comparison_deg_parts))
                 
-                # -----------------------------
-                # Formální power-law test + CCDF
-                # -----------------------------
-                st.markdown("#### Formální power-law test + CCDF")
+
 
 
 
@@ -5002,6 +4801,223 @@ else:  # "Porovnat dvě časové řady"
                             )
 
                         st.warning(" ".join(compare_powerlaw_parts))
+            
+                # =============================
+                # Shrnutí analýzy pro obě série
+                # =============================
+                if "Shrnutí analýzy" in selected_sections_cmp:
+                    st.markdown("### Shrnutí analýzy")
+
+                    tech1, interp1, verdict1 = generate_hvg_summary_text(
+                        n_nodes=n1,
+                        n_edges=m1,
+                        avg_deg=avg_deg1,
+                        C=C1,
+                        L=L1,
+                        sigma_sw=sigma1,
+                        assort=assort1,
+                        is_normalized=st.session_state.get("series_normalized", False),
+                        aggregation_freq=st.session_state.get("series_aggregation", None),
+                        series_name=st.session_state.get("series_name", "Série 1"),
+                    )
+
+                    tech2, interp2, verdict2 = generate_hvg_summary_text(
+                        n_nodes=n2,
+                        n_edges=m2,
+                        avg_deg=avg_deg2,
+                        C=C2,
+                        L=L2,
+                        sigma_sw=sigma2,
+                        assort=assort2,
+                        is_normalized=st.session_state.get("series_normalized2", False),
+                        aggregation_freq=st.session_state.get("series_aggregation2", None),
+                        series_name=st.session_state.get("series_name2", "Série 2"),
+                    )
+                    classification1 = classify_series_from_hvg(
+                        avg_deg=avg_deg1,
+                        C=C1,
+                        L=L1,
+                        sigma_sw=sigma1,
+                        assort=assort1,
+                        entropy_deg_norm=entropy_deg_norm1,
+                        powerlaw_p=powerlaw_p_result_1,
+                        powerlaw_R=powerlaw_R_result_1,
+                        C_rand=C_rand1,
+                        L_rand=L_rand1,
+                        sigma_conf=sigma1c,
+                    )
+
+                    classification2 = classify_series_from_hvg(
+                        avg_deg=avg_deg2,
+                        C=C2,
+                        L=L2,
+                        sigma_sw=sigma2,
+                        assort=assort2,
+                        entropy_deg_norm=entropy_deg_norm2,
+                        powerlaw_p=powerlaw_p_result_2,
+                        powerlaw_R=powerlaw_R_result_2,
+                        C_rand=C_rand2,
+                        L_rand=L_rand2,
+                        sigma_conf=sigma2c,
+                    )
+
+                    col_s1, col_s2 = st.columns(2)
+
+                    with col_s1:
+                        st.markdown("## Série 1")
+                        st.markdown("**Technické shrnutí**")
+                        st.info(tech1)
+
+                        st.markdown("**Interpretace časové řady**")
+                        st.write(interp1)
+
+                        st.markdown("**Orientační klasifikace**")
+                        st.success(
+                            f"**{classification1['label']}** "
+                            f"(jistota: **{classification1['confidence']}**)"
+                        )
+                        st.write(classification1["reason_text"])
+
+                        st.markdown("**Charakter sítě**")
+                        st.caption(classification1["structure_text"])
+
+                        st.markdown("**Závěrečný verdikt**")
+                        st.warning(verdict1)
+                        st.markdown("**Skóre jednotlivých interpretací**")
+                        score1_col1, score1_col2, score1_col3 = st.columns(3)
+
+                        with score1_col1:
+                            st.metric("Pravidelná / periodická", classification1["scores"]["Spíše pravidelná / periodická"])
+                        with score1_col2:
+                            st.metric("Komplexní / chaotická", classification1["scores"]["Spíše komplexní deterministická / chaotická"])
+                        with score1_col3:
+                            st.metric("Stochastická / náhodná", classification1["scores"]["Spíše stochastická / náhodná"])
+
+                        st.caption(classification1["warning_text"])
+                    with col_s2:
+                        st.markdown("## Série 2")
+                        st.markdown("**Technické shrnutí**")
+                        st.info(tech2)
+
+                        st.markdown("**Interpretace časové řady**")
+                        st.write(interp2)
+
+                        st.markdown("**Orientační klasifikace**")
+                        st.success(
+                            f"**{classification2['label']}** "
+                            f"(jistota: **{classification2['confidence']}**)"
+                        )
+                        st.write(classification2["reason_text"])
+
+                        st.markdown("**Charakter sítě**")
+                        st.caption(classification2["structure_text"])
+
+                        st.markdown("**Závěrečný verdikt**")
+                        st.warning(verdict2)
+                        st.markdown("**Skóre jednotlivých interpretací**")
+                        score2_col1, score2_col2, score2_col3 = st.columns(3)
+
+                        with score2_col1:
+                            st.metric("Pravidelná / periodická", classification2["scores"]["Spíše pravidelná / periodická"])
+                        with score2_col2:
+                            st.metric("Komplexní / chaotická", classification2["scores"]["Spíše komplexní deterministická / chaotická"])
+                        with score2_col3:
+                            st.metric("Stochastická / náhodná", classification2["scores"]["Spíše stochastická / náhodná"])
+
+                        st.caption(classification2["warning_text"])                    
+                    st.markdown("---")
+                    st.markdown("## Porovnání sérií") 
+                    
+                    comparison_parts = []
+
+                    if not np.isnan(C1) and not np.isnan(C2):
+                        if C1 > C2:
+                            comparison_parts.append(
+                                "Série 1 vykazuje vyšší lokální propojenost než Série 2."
+                            )
+                        elif C2 > C1:
+                            comparison_parts.append(
+                                "Série 2 vykazuje vyšší lokální propojenost než Série 1."
+                            )
+                        else:
+                            comparison_parts.append(
+                                "Obě série mají podobnou lokální propojenost."
+                            )
+
+                    if sigma1 is not None and sigma2 is not None and not np.isnan(sigma1) and not np.isnan(sigma2):
+                        if sigma1 > sigma2:
+                            comparison_parts.append(
+                                "Z hlediska small-world indexu je Série 1 strukturálně výraznější."
+                            )
+                        elif sigma2 > sigma1:
+                            comparison_parts.append(
+                                "Z hlediska small-world indexu je Série 2 strukturálně výraznější."
+                            )
+                        else:
+                            comparison_parts.append(
+                                "Obě série mají podobný small-world charakter."
+                            )
+
+                    if avg_deg1 > avg_deg2:
+                        comparison_parts.append(
+                            "HVG Série 1 je v průměru propojenější než HVG Série 2."
+                        )
+                    elif avg_deg2 > avg_deg1:
+                        comparison_parts.append(
+                            "HVG Série 2 je v průměru propojenější než HVG Série 1."
+                        )
+                    else:
+                        comparison_parts.append(
+                            "Obě HVG mají podobnou průměrnou propojenost."
+                        )
+
+                    if entropy_deg_norm1 > entropy_deg_norm2:
+                        comparison_parts.append(
+                            "Série 1 má vyšší variabilitu stupňového rozdělení než Série 2."
+                        )
+                    elif entropy_deg_norm2 > entropy_deg_norm1:
+                        comparison_parts.append(
+                            "Série 2 má vyšší variabilitu stupňového rozdělení než Série 1."
+                        )
+                    else:
+                        comparison_parts.append(
+                            "Obě série mají podobnou variabilitu stupňového rozdělení."
+                        )
+
+                    st.markdown("**Strukturální porovnání**")
+                    st.info(" ".join(comparison_parts))   
+                    
+                    st.markdown("**Porovnání charakteru časových řad**")
+
+                    if classification1["label"] == classification2["label"]:
+                        st.success(
+                            f"Obě časové řady vykazují podobný orientační charakter: "
+                            f"**{classification1['label']}**."
+                        )
+                    else:
+                        st.warning(
+                            f"Série 1 je orientačně klasifikována jako **{classification1['label']}**, "
+                            f"zatímco Série 2 jako **{classification2['label']}**."
+                        )
+                    best_score_1 = max(classification1["scores"].values())
+                    best_score_2 = max(classification2["scores"].values())
+
+                    if best_score_1 > best_score_2:
+                        st.info(
+                            "Série 1 vykazuje silnější podporu pro svou dominantní interpretaci než Série 2."
+                        )
+                    elif best_score_2 > best_score_1:
+                        st.info(
+                            "Série 2 vykazuje silnější podporu pro svou dominantní interpretaci než Série 1."
+                        )
+                    else:
+                        st.info(
+                            "Obě série mají podobně silnou podporu pro svou dominantní interpretaci."
+                        )
+                    st.caption(
+                        "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
+                        "small-world charakteru a variability stupňového rozdělení."
+                    )
                             
             # =============================
             #  Arc Diagram HVG – obě série
