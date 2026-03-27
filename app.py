@@ -631,8 +631,9 @@ for key in (
     "meta",
     "meta2",
     "show_hvg",
-    "show_direct",
     "show_horiz",
+    "show_cmp_horiz1",
+    "show_cmp_horiz2",
     "custom_graph",
     "series_name",
     "series_normalized",
@@ -1085,7 +1086,6 @@ if analysis_mode == "Časová řada → HVG":
                 else:
                     st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
         st.session_state.show_hvg = False
-        st.session_state.show_direct = False
         st.session_state.show_horiz = False
 
     # =========================
@@ -1107,23 +1107,6 @@ if analysis_mode == "Časová řada → HVG":
             hover_data={"index": True, "value": ":.3f"},
         )
         fig_ts.update_traces(marker_size=8)
-
-        # Přímé linky
-        if st.session_state.show_direct:
-            G_tmp = build_hvg(arr)
-            shapes = []
-            for i, j in G_tmp.edges():
-                shapes.append(
-                    dict(
-                        type="line",
-                        x0=i,
-                        y0=arr[i],
-                        x1=j,
-                        y1=arr[j],
-                        line=dict(color="gray", width=1),
-                    )
-                )
-            fig_ts.update_layout(shapes=shapes)
 
         # Vodorovné linky
         if st.session_state.show_horiz:
@@ -1163,21 +1146,16 @@ if analysis_mode == "Časová řada → HVG":
                 f"Rozptyl: **{arr.var():.3f}**"
             )
 
-        # Tlačítka vedle sebe (toggle)
-        c1, c2, c3 = st.columns(3)
+        # Tlačítka vedle sebe
+        c1, c2 = st.columns(2)
+
         with c1:
             if st.button("Vygenerovat HVG"):
                 st.session_state.show_hvg = True
+
         with c2:
-            if st.button("HVG linky (přímé)"):
-                st.session_state.show_direct = not st.session_state.show_direct
-                if st.session_state.show_direct:
-                    st.session_state.show_horiz = False
-        with c3:
             if st.button("HVG linky (vodorovné)"):
                 st.session_state.show_horiz = not st.session_state.show_horiz
-                if st.session_state.show_horiz:
-                    st.session_state.show_direct = False
 
     # =========================
     #  Interaktivní HVG + další sekce pod ním
@@ -1188,7 +1166,6 @@ if analysis_mode == "Časová řada → HVG":
         G = build_hvg(arr)
         powerlaw_p_result = None
         powerlaw_R_result = None
-        
         st.subheader("Interaktivní vizualizace HVG")
 
         # ---- Přehledné přepínání sekcí pod HVG ----
@@ -2699,13 +2676,7 @@ else:  # "Porovnat dvě časové řady"
         # Série 1 = už vygenerovaná časová řada
         # =============================
         data1 = st.session_state.data
-        st.markdown("### Série 1 – aktuálně vygenerovaná časová řada")
 
-        st.write(
-            f"- Délka: **{len(data1)}**, "
-            f"Průměr: **{data1.mean():.3f}**, "
-            f"Rozptyl: **{data1.var():.3f}**"
-        )
 
         # HVG pro sérii 1
         G1 = build_hvg(data1)
@@ -3185,6 +3156,8 @@ else:  # "Porovnat dvě časové řady"
             else:
                 st.session_state.data2 = data2_candidate.copy()
                 st.session_state.meta2 = meta2
+                st.session_state.show_cmp_horiz1 = False
+                st.session_state.show_cmp_horiz2 = False
 
                 if src2 == "Nahrát CSV":
                     st.session_state.series_name2 = selected_column2
@@ -3225,28 +3198,6 @@ else:  # "Porovnat dvě časové řady"
                 "**„Načíst / generovat sérii 2“**."
             )
         else:
-            # =============================
-            # Série 2 – výpočet HVG a metrik
-            # =============================
-            st.markdown("### Série 2 – nastavená v levém panelu")
-
-            st.write(f"- Délka: **{len(data2)}**")
-
-            if meta2_saved is not None and meta2_saved.get("normalized", False):
-                st.write(
-                    f"- Původní průměr: **{meta2_saved['original_mean']:.3f}**, "
-                    f"Původní rozptyl: **{meta2_saved['original_var']:.3f}**"
-                )
-                st.write(
-                    f"- Průměr po normalizaci: **{meta2_saved['processed_mean']:.3f}**, "
-                    f"Rozptyl po normalizaci: **{meta2_saved['processed_var']:.3f}**"
-                )
-            else:
-                st.write(
-                    f"- Průměr: **{data2.mean():.3f}**, "
-                    f"Rozptyl: **{data2.var():.3f}**"
-                )
-
             G2 = build_hvg(data2)
             n2 = G2.number_of_nodes()
             m2 = G2.number_of_edges()
@@ -3260,10 +3211,12 @@ else:  # "Porovnat dvě časové řady"
                 entropy_deg_norm2 = entropy_deg2 / np.log(len(unique_deg2_main))
             else:
                 entropy_deg_norm2 = 0.0
+
             try:
                 C2 = nx.average_clustering(G2)
             except Exception:
                 C2 = float("nan")
+
             is_conn2 = nx.is_connected(G2) if n2 > 0 else False
             L2 = None
             diam2 = None
@@ -3276,12 +3229,15 @@ else:  # "Porovnat dvě časové řady"
                     diam2 = nx.diameter(G2)
                 except Exception:
                     diam2 = None
+
             L_rand2 = np.log(n2) / np.log(avg_deg2) if n2 > 1 and avg_deg2 > 1 else None
             C_rand2 = avg_deg2 / n2 if n2 > 0 else None
+
             try:
                 assort2 = nx.degree_assortativity_coefficient(G2)
             except Exception:
                 assort2 = None
+
             analyzer2 = SmallWorldAnalyzer(C2, L2, C_rand2, L_rand2)
             sigma2 = analyzer2.sigma
             powerlaw_p_result_2 = None
@@ -3330,6 +3286,89 @@ else:  # "Porovnat dvě časové řady"
                     sigma2c = (C2c / C_rand2c) / (L2c / L_rand2c)
                 except Exception:
                     sigma2c = None
+            # =============================
+            # Časové řady série 1 a 2 hned pod jejich nadpisy
+            # =============================
+            col_series1, col_series2 = st.columns(2)
+
+            with col_series1:
+                st.markdown("### Série 1 – aktuálně vygenerovaná časová řada")
+                st.write(
+                    f"- Délka: **{len(data1)}**, "
+                    f"Průměr: **{data1.mean():.3f}**, "
+                    f"Rozptyl: **{data1.var():.3f}**"
+                )
+
+                df1 = pd.DataFrame({"index": np.arange(len(data1)), "value": data1})
+                fig1 = px.line(df1, x="index", y="value", markers=True, title="Série 1")
+                fig1.update_traces(marker_size=6)
+
+                if st.session_state.show_cmp_horiz1:
+                    shapes1 = []
+                    for i, j in G1.edges():
+                        y = min(data1[i], data1[j])
+                        shapes1.append(
+                            dict(
+                                type="line",
+                                x0=i,
+                                y0=y,
+                                x1=j,
+                                y1=y,
+                                line=dict(color="gray", width=1),
+                            )
+                        )
+                    fig1.update_layout(shapes=shapes1)
+
+                st.plotly_chart(fig1, use_container_width=True)
+
+                if st.button("HVG linky (vodorovné) – Série 1", key="btn_cmp_horiz1"):
+                    st.session_state.show_cmp_horiz1 = not st.session_state.show_cmp_horiz1
+                    st.rerun()
+
+            with col_series2:
+                st.markdown("### Série 2 – nastavená v levém panelu")
+                st.write(f"- Délka: **{len(data2)}**")
+
+                if meta2_saved is not None and meta2_saved.get("normalized", False):
+                    st.write(
+                        f"- Původní průměr: **{meta2_saved['original_mean']:.3f}**, "
+                        f"Původní rozptyl: **{meta2_saved['original_var']:.3f}**"
+                    )
+                    st.write(
+                        f"- Průměr po normalizaci: **{meta2_saved['processed_mean']:.3f}**, "
+                        f"Rozptyl po normalizaci: **{meta2_saved['processed_var']:.3f}**"
+                    )
+                else:
+                    st.write(
+                        f"- Průměr: **{data2.mean():.3f}**, "
+                        f"Rozptyl: **{data2.var():.3f}**"
+                    )
+
+                df2 = pd.DataFrame({"index": np.arange(len(data2)), "value": data2})
+                fig2 = px.line(df2, x="index", y="value", markers=True, title="Série 2")
+                fig2.update_traces(marker_size=6)
+
+                if st.session_state.show_cmp_horiz2:
+                    shapes2 = []
+                    for i, j in G2.edges():
+                        y = min(data2[i], data2[j])
+                        shapes2.append(
+                            dict(
+                                type="line",
+                                x0=i,
+                                y0=y,
+                                x1=j,
+                                y1=y,
+                                line=dict(color="gray", width=1),
+                            )
+                        )
+                    fig2.update_layout(shapes=shapes2)
+
+                st.plotly_chart(fig2, use_container_width=True)
+
+                if st.button("HVG linky (vodorovné) – Série 2", key="btn_cmp_horiz2"):
+                    st.session_state.show_cmp_horiz2 = not st.session_state.show_cmp_horiz2
+                    st.rerun()    
             
             # =============================
             # Společný výběr sekcí pro obě HVG
@@ -3404,22 +3443,6 @@ else:  # "Porovnat dvě časové řady"
                     alpha2 = None
                     xmin1 = None
                     xmin2 = None
-            # =============================
-            # Časové řady vedle sebe
-            # =============================
-            st.markdown("### Časové řady vedle sebe")
-
-            col_ts1, col_ts2 = st.columns(2)
-            with col_ts1:
-                df1 = pd.DataFrame({"index": np.arange(len(data1)), "value": data1})
-                fig1 = px.line(df1, x="index", y="value", markers=True, title="Série 1")
-                fig1.update_traces(marker_size=6)
-                st.plotly_chart(fig1, use_container_width=True)
-            with col_ts2:
-                df2 = pd.DataFrame({"index": np.arange(len(data2)), "value": data2})
-                fig2 = px.line(df2, x="index", y="value", markers=True, title="Série 2")
-                fig2.update_traces(marker_size=6)
-                st.plotly_chart(fig2, use_container_width=True)
 
             # =============================
             # HVG vizualizace vedle sebe
@@ -4768,8 +4791,7 @@ else:  # "Porovnat dvě časové řady"
 
                         result_text_1 = None
                         result_text_2 = None
-                        alpha1 = None
-                        alpha2 = None
+
 
                         with col_pl1:
                             st.markdown("**Série 1 – power-law analýza**")
