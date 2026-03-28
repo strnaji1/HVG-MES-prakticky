@@ -774,7 +774,8 @@ if analysis_mode == "Časová řada → HVG":
             )
 
         elif chaos_typ == "1/f šum (pink noise)":
-            length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)           
+            length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)
+                       
     elif mode == "Nahrát CSV":
                 uploaded_file = st.sidebar.file_uploader(
                     "Nahraj CSV soubor", type="csv", key="csv_main"
@@ -1088,7 +1089,7 @@ if analysis_mode == "Časová řada → HVG":
                     st.error(err)
                     data = None
 
-        else:  # Chaotické generátory
+        elif mode == "Chaotické generátory":
             if chaos_typ == "Logistická mapa":
                 data = generate_logistic_map(length, r=r, x0=x0, burn=burn_log)
             elif chaos_typ == "Henonova mapa":
