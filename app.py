@@ -692,7 +692,7 @@ if analysis_mode == "Časová řada → HVG":
     st.sidebar.subheader("Nastavení časové řady")
 
     mode = st.sidebar.radio(
-        "Typ vstupu", ["Standardní signály", "Chaotické generátory"]
+        "Typ vstupu", ["Standardní signály", "Chaotické generátory", "Nahrát CSV"]
     )
 
     typ = None
@@ -705,7 +705,6 @@ if analysis_mode == "Časová řada → HVG":
                 "Náhodná uniformní",
                 "Náhodná normální",
                 "Sinusovka",
-                "Nahrát CSV",
                 "Ruční vstup",
             ],
         )
@@ -722,226 +721,12 @@ if analysis_mode == "Časová řada → HVG":
             length = st.sidebar.slider("Délka řady", 10, 500, 100)
             amp = st.sidebar.number_input("Amplituda", value=1.0)
             freq = st.sidebar.number_input("Frekvence", value=1.0)
-        elif typ == "Nahrát CSV":
-            uploaded_file = st.sidebar.file_uploader(
-                "Nahraj CSV soubor", type="csv", key="csv_main"
-            )
-
-            csv_column = None
-            normalize_csv = False
-            csv_start_index = 0
-            csv_end_index = 0
-            csv_has_header = True
-
-            if uploaded_file is not None:
-                csv_has_header = st.sidebar.checkbox(
-                    "CSV má hlavičku", value=True, key="csv_main_header"
-                )
-
-                df_preview, _, _, err = load_csv_series(
-                    uploaded_file,
-                    has_header=csv_has_header,
-                )
-
-                if err:
-                    st.sidebar.error(err)
-                else:
-                    st.sidebar.caption("Náhled (prvních 5 řádků):")
-                    st.sidebar.dataframe(df_preview.head(), use_container_width=True)
-
-                    csv_column = st.sidebar.selectbox(
-                        "Vyber sloupec s hodnotami časové řady",
-                        options=df_preview.columns.tolist(),
-                        key="csv_main_col",
-                    )
-                    datetime_options = ["Žádný"] + df_preview.columns.tolist()
-
-                    csv_datetime_column = st.sidebar.selectbox(
-                        "Sloupec s datem/časem (volitelné)",
-                        options=datetime_options,
-                        key="csv_main_datetime_col",
-                    )
-
-                    selection_mode_main = "index"
-
-                    if csv_datetime_column != "Žádný":
-                        selection_mode_main = st.sidebar.radio(
-                            "Jak chceš vybírat rozsah?",
-                            ["Podle indexu", "Podle data"],
-                            key="csv_main_selection_mode",
-                        )
-
-                    normalize_csv = st.sidebar.checkbox(
-                        "Normalizovat (z-score)", value=False, key="csv_main_norm"
-                    )
-                    if normalize_csv:
-                        st.sidebar.caption(
-                            "Data jsou převedena na bezrozměrnou škálu (z-score). "
-                            "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
-                        )
-                    aggregation_freq_main = "bez agregace"
-                    aggregation_method_main = "mean"
-
-                    if csv_datetime_column != "Žádný":
-                        st.sidebar.markdown("**Agregace časové řady**")
-
-                        aggregation_freq_main = st.sidebar.selectbox(
-                            "Agregační krok",
-                            options=[
-                                "bez agregace",
-                                "1min",
-                                "5min",
-                                "10min",
-                                "30min",
-                                "1h",
-                                "1D",
-                            ],
-                            key="csv_main_agg_freq",
-                        )
-
-                        if aggregation_freq_main != "bez agregace":
-                            aggregation_method_main = st.sidebar.selectbox(
-                                "Agregační metoda",
-                                options=["mean", "median", "min", "max", "sum", "last"],
-                                key="csv_main_agg_method",
-                            )
-                            
-                    st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
-
-                    csv_start_date = None
-                    csv_end_date = None
-
-                    if csv_datetime_column != "Žádný" and selection_mode_main == "Podle data":
-                        dt_series = pd.to_datetime(df_preview[csv_datetime_column], errors="coerce").dropna()
-
-                        if len(dt_series) > 0:
-                            min_dt = dt_series.min()
-                            max_dt = dt_series.max()
-
-                            csv_start_date = st.sidebar.date_input(
-                                "Datum od",
-                                value=min_dt.date(),
-                                min_value=min_dt.date(),
-                                max_value=max_dt.date(),
-                                key="csv_main_date_start",
-                            )
-
-                            csv_end_date = st.sidebar.date_input(
-                                "Datum do",
-                                value=max_dt.date(),
-                                min_value=min_dt.date(),
-                                max_value=max_dt.date(),
-                                key="csv_main_date_end",
-                            )
-
-                            _, _, preview_meta, preview_err = load_csv_series(
-                                uploaded_file,
-                                selected_column=csv_column,
-                                normalize=False,
-                                start_index=0,
-                                end_index=None,
-                                has_header=csv_has_header,
-                                datetime_column=csv_datetime_column,
-                                selection_mode="date",
-                                start_date=csv_start_date,
-                                end_date=csv_end_date,
-                                aggregation_freq=aggregation_freq_main,
-                                aggregation_method=aggregation_method_main,
-                            )
-
-                            if preview_err:
-                                st.sidebar.warning(preview_err)
-                            elif preview_meta is not None:
-                                st.sidebar.caption(
-                                    f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
-                                )
-                        else:
-                            st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
-                    else:
-                        max_possible_index = max(0, len(df_preview) - 1)
-                        default_end_main = min(999, max_possible_index)
-
-                        if "csv_main_range" not in st.session_state:
-                            st.session_state.csv_main_range = (0, default_end_main)
-
-                        if "csv_main_start_manual" not in st.session_state:
-                            st.session_state.csv_main_start_manual = st.session_state.csv_main_range[0]
-
-                        if "csv_main_end_manual" not in st.session_state:
-                            st.session_state.csv_main_end_manual = st.session_state.csv_main_range[1]
-
-                        start_tmp, end_tmp = st.session_state.csv_main_range
-                        start_tmp = min(max(0, start_tmp), max_possible_index)
-                        end_tmp = min(max(0, end_tmp), max_possible_index)
-                        if start_tmp > end_tmp:
-                            start_tmp, end_tmp = end_tmp, start_tmp
-
-                        st.session_state.csv_main_range = (start_tmp, end_tmp)
-                        st.session_state.csv_main_start_manual = start_tmp
-                        st.session_state.csv_main_end_manual = end_tmp
-
-                        csv_start_index, csv_end_index = st.sidebar.slider(
-                            "Vyber rozsah řádků",
-                            min_value=0,
-                            max_value=max_possible_index,
-                            step=1,
-                            key="csv_main_range",
-                            on_change=sync_main_from_slider,
-                        )
-
-                        col_range_1, col_range_2 = st.sidebar.columns(2)
-
-                        with col_range_1:
-                            st.number_input(
-                                "Od",
-                                min_value=0,
-                                max_value=max_possible_index,
-                                step=1,
-                                key="csv_main_start_manual",
-                                on_change=sync_main_from_manual,
-                            )
-
-                        with col_range_2:
-                            st.number_input(
-                                "Do",
-                                min_value=0,
-                                max_value=max_possible_index,
-                                step=1,
-                                key="csv_main_end_manual",
-                                on_change=sync_main_from_manual,
-                            )
-
-                        csv_start_index = st.session_state.csv_main_start_manual
-                        csv_end_index = st.session_state.csv_main_end_manual
-
-                        _, _, preview_meta, preview_err = load_csv_series(
-                            uploaded_file,
-                            selected_column=csv_column,
-                            normalize=False,
-                            start_index=csv_start_index,
-                            end_index=csv_end_index,
-                            has_header=csv_has_header,
-                            datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
-                            selection_mode="index",
-                            start_date=None,
-                            end_date=None,
-                            aggregation_freq=aggregation_freq_main,
-                            aggregation_method=aggregation_method_main,
-                        )
-
-                        if preview_err:
-                            st.sidebar.warning(preview_err)
-                        elif preview_meta is not None:
-                            st.sidebar.caption(
-                                f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
-                            )
-
         elif typ == "Ruční vstup":
             raw_text = st.sidebar.text_area(
                 "Zadej hodnoty oddělené čárkou", value="10, 5, 3, 7, 6"
             )
-
-    else:  # Chaotické generátory
+            
+    elif mode == "Chaotické generátory":
         chaos_typ = st.sidebar.selectbox(
             "Vyber chaotický systém",
             [
@@ -956,7 +741,11 @@ if analysis_mode == "Časová řada → HVG":
             length = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100)
             r = st.sidebar.slider("Parametr r", 3.5, 4.0, 3.9, step=0.01)
             x0 = st.sidebar.number_input(
-                "Počáteční x₀", min_value=0.0, max_value=1.0, value=0.2, step=0.01
+                "Počáteční x₀",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.2,
+                step=0.01,
             )
             burn_log = st.sidebar.number_input(
                 "Burn-in iterace", 100, 10000, 500, step=100
@@ -985,14 +774,273 @@ if analysis_mode == "Časová řada → HVG":
             )
 
         elif chaos_typ == "1/f šum (pink noise)":
-            length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)
+            length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)           
+    elif mode == "Nahrát CSV":
+                uploaded_file = st.sidebar.file_uploader(
+                    "Nahraj CSV soubor", type="csv", key="csv_main"
+                )
 
-    # tlačítko pro generování
-    generate = st.sidebar.button("Načíst / generovat řadu")
+                csv_column = None
+                normalize_csv = False
+                csv_start_index = 0
+                csv_end_index = 0
+                csv_has_header = True
 
-    # =========================
-    #  Generování dat
-    # =========================
+                if uploaded_file is not None:
+                    csv_has_header = st.sidebar.checkbox(
+                        "CSV má hlavičku", value=True, key="csv_main_header"
+                    )
+
+                    df_preview, _, _, err = load_csv_series(
+                        uploaded_file,
+                        has_header=csv_has_header,
+                    )
+
+                    if err:
+                        st.sidebar.error(err)
+                    else:
+                        st.sidebar.caption("Náhled (prvních 5 řádků):")
+                        st.sidebar.dataframe(df_preview.head(), use_container_width=True)
+
+                        csv_column = st.sidebar.selectbox(
+                            "Vyber sloupec s hodnotami časové řady",
+                            options=df_preview.columns.tolist(),
+                            key="csv_main_col",
+                        )
+                        datetime_options = ["Žádný"] + df_preview.columns.tolist()
+
+                        csv_datetime_column = st.sidebar.selectbox(
+                            "Sloupec s datem/časem (volitelné)",
+                            options=datetime_options,
+                            key="csv_main_datetime_col",
+                        )
+
+                        selection_mode_main = "index"
+
+                        if csv_datetime_column != "Žádný":
+                            selection_mode_main = st.sidebar.radio(
+                                "Jak chceš vybírat rozsah?",
+                                ["Podle indexu", "Podle data"],
+                                key="csv_main_selection_mode",
+                            )
+
+                        normalize_csv = st.sidebar.checkbox(
+                            "Normalizovat (z-score)", value=False, key="csv_main_norm"
+                        )
+                        if normalize_csv:
+                            st.sidebar.caption(
+                                "Data jsou převedena na bezrozměrnou škálu (z-score). "
+                                "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
+                            )
+                        aggregation_freq_main = "bez agregace"
+                        aggregation_method_main = "mean"
+
+                        if csv_datetime_column != "Žádný":
+                            st.sidebar.markdown("**Agregace časové řady**")
+
+                            aggregation_freq_main = st.sidebar.selectbox(
+                                "Agregační krok",
+                                options=[
+                                    "bez agregace",
+                                    "1min",
+                                    "5min",
+                                    "10min",
+                                    "30min",
+                                    "1h",
+                                    "1D",
+                                ],
+                                key="csv_main_agg_freq",
+                            )
+
+                            if aggregation_freq_main != "bez agregace":
+                                aggregation_method_main = st.sidebar.selectbox(
+                                    "Agregační metoda",
+                                    options=["mean", "median", "min", "max", "sum", "last"],
+                                    key="csv_main_agg_method",
+                                )
+                                
+                        st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
+
+                        csv_start_date = None
+                        csv_end_date = None
+
+                        if csv_datetime_column != "Žádný" and selection_mode_main == "Podle data":
+                            dt_series = pd.to_datetime(df_preview[csv_datetime_column], errors="coerce").dropna()
+
+                            if len(dt_series) > 0:
+                                min_dt = dt_series.min()
+                                max_dt = dt_series.max()
+
+                                csv_start_date = st.sidebar.date_input(
+                                    "Datum od",
+                                    value=min_dt.date(),
+                                    min_value=min_dt.date(),
+                                    max_value=max_dt.date(),
+                                    key="csv_main_date_start",
+                                )
+
+                                csv_end_date = st.sidebar.date_input(
+                                    "Datum do",
+                                    value=max_dt.date(),
+                                    min_value=min_dt.date(),
+                                    max_value=max_dt.date(),
+                                    key="csv_main_date_end",
+                                )
+
+                                _, _, preview_meta, preview_err = load_csv_series(
+                                    uploaded_file,
+                                    selected_column=csv_column,
+                                    normalize=False,
+                                    start_index=0,
+                                    end_index=None,
+                                    has_header=csv_has_header,
+                                    datetime_column=csv_datetime_column,
+                                    selection_mode="date",
+                                    start_date=csv_start_date,
+                                    end_date=csv_end_date,
+                                    aggregation_freq=aggregation_freq_main,
+                                    aggregation_method=aggregation_method_main,
+                                )
+
+                                if preview_err:
+                                    st.sidebar.warning(preview_err)
+                                elif preview_meta is not None:
+                                    st.sidebar.caption(
+                                        f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
+                                    )
+                            else:
+                                st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
+                        else:
+                            max_possible_index = max(0, len(df_preview) - 1)
+                            default_end_main = min(999, max_possible_index)
+
+                            if "csv_main_range" not in st.session_state:
+                                st.session_state.csv_main_range = (0, default_end_main)
+
+                            if "csv_main_start_manual" not in st.session_state:
+                                st.session_state.csv_main_start_manual = st.session_state.csv_main_range[0]
+
+                            if "csv_main_end_manual" not in st.session_state:
+                                st.session_state.csv_main_end_manual = st.session_state.csv_main_range[1]
+
+                            start_tmp, end_tmp = st.session_state.csv_main_range
+                            start_tmp = min(max(0, start_tmp), max_possible_index)
+                            end_tmp = min(max(0, end_tmp), max_possible_index)
+                            if start_tmp > end_tmp:
+                                start_tmp, end_tmp = end_tmp, start_tmp
+
+                            st.session_state.csv_main_range = (start_tmp, end_tmp)
+                            st.session_state.csv_main_start_manual = start_tmp
+                            st.session_state.csv_main_end_manual = end_tmp
+
+                            csv_start_index, csv_end_index = st.sidebar.slider(
+                                "Vyber rozsah řádků",
+                                min_value=0,
+                                max_value=max_possible_index,
+                                step=1,
+                                key="csv_main_range",
+                                on_change=sync_main_from_slider,
+                            )
+
+                            col_range_1, col_range_2 = st.sidebar.columns(2)
+
+                            with col_range_1:
+                                st.number_input(
+                                    "Od",
+                                    min_value=0,
+                                    max_value=max_possible_index,
+                                    step=1,
+                                    key="csv_main_start_manual",
+                                    on_change=sync_main_from_manual,
+                                )
+
+                            with col_range_2:
+                                st.number_input(
+                                    "Do",
+                                    min_value=0,
+                                    max_value=max_possible_index,
+                                    step=1,
+                                    key="csv_main_end_manual",
+                                    on_change=sync_main_from_manual,
+                                )
+
+                            csv_start_index = st.session_state.csv_main_start_manual
+                            csv_end_index = st.session_state.csv_main_end_manual
+
+                            _, _, preview_meta, preview_err = load_csv_series(
+                                uploaded_file,
+                                selected_column=csv_column,
+                                normalize=False,
+                                start_index=csv_start_index,
+                                end_index=csv_end_index,
+                                has_header=csv_has_header,
+                                datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
+                                selection_mode="index",
+                                start_date=None,
+                                end_date=None,
+                                aggregation_freq=aggregation_freq_main,
+                                aggregation_method=aggregation_method_main,
+                            )
+
+                        if preview_err:
+                            st.sidebar.warning(preview_err)
+                        elif preview_meta is not None:
+                            st.sidebar.caption(
+                                f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
+                            )
+                        else:  # Chaotické generátory
+                            chaos_typ = st.sidebar.selectbox(
+                                "Vyber chaotický systém",
+                                [
+                                    "Logistická mapa",
+                                    "Henonova mapa",
+                                    "Lorenzův systém (x-složka)",
+                                    "1/f šum (pink noise)",
+                                ],
+                            )
+
+                        if chaos_typ == "Logistická mapa":
+                            length = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100)
+                            r = st.sidebar.slider("Parametr r", 3.5, 4.0, 3.9, step=0.01)
+                            x0 = st.sidebar.number_input(
+                                "Počáteční x₀", min_value=0.0, max_value=1.0, value=0.2, step=0.01
+                            )
+                            burn_log = st.sidebar.number_input(
+                                "Burn-in iterace", 100, 10000, 500, step=100
+                            )
+
+                        elif chaos_typ == "Henonova mapa":
+                            length = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100)
+                            a = st.sidebar.number_input("Parametr a", value=1.4, step=0.1)
+                            b = st.sidebar.number_input("Parametr b", value=0.3, step=0.05)
+                            x0 = st.sidebar.number_input("Počáteční x₀", value=0.1, step=0.05)
+                            y0 = st.sidebar.number_input("Počáteční y₀", value=0.0, step=0.05)
+                            burn_henon = st.sidebar.number_input(
+                                "Burn-in iterace", 100, 10000, 500, step=100
+                            )
+
+                        elif chaos_typ == "Lorenzův systém (x-složka)":
+                            length = st.sidebar.slider("Délka řady", 200, 10000, 2000, step=200)
+                            dt = st.sidebar.number_input(
+                                "Krok integrace dt", value=0.01, step=0.005, format="%.3f"
+                            )
+                            sigma_l = st.sidebar.number_input("σ (sigma)", value=10.0, step=1.0)
+                            rho_l = st.sidebar.number_input("ρ (rho)", value=28.0, step=1.0)
+                            beta_l = st.sidebar.number_input("β (beta)", value=8 / 3, step=0.1)
+                            burn_lor = st.sidebar.number_input(
+                                "Burn-in kroků", 500, 20000, 1000, step=500
+                            )
+
+                        elif chaos_typ == "1/f šum (pink noise)":
+                            length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)
+
+                   
+
+        # tlačítko pro generování
+    generate = st.sidebar.button("Načíst / generovat řadu") 
+        # =========================
+        #  Generování dat
+        # =========================
 
     if generate:
         data = None
@@ -1006,38 +1054,38 @@ if analysis_mode == "Časová řada → HVG":
             elif typ == "Sinusovka":
                 x = np.arange(length)
                 data = amp * np.sin(2 * np.pi * freq * x / length)
-            elif typ == "Nahrát CSV":
-                if uploaded_file is None:
-                    st.error("Nejprve nahraj CSV soubor.")
-                    data = None
-                elif csv_column is None:
-                    st.error("Vyber sloupec s časovou řadou.")
-                    data = None
-                else:
-                    _, data, meta, err = load_csv_series(
-                        uploaded_file,
-                        selected_column=csv_column,
-                        normalize=normalize_csv,
-                        start_index=csv_start_index,
-                        end_index=csv_end_index,
-                        has_header=csv_has_header,
-                        datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
-                        selection_mode="date" if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else "index",
-                        start_date=csv_start_date if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else None,
-                        end_date=csv_end_date if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else None,
-                        aggregation_freq=aggregation_freq_main,
-                        aggregation_method=aggregation_method_main,
-                    )
-
-                    if err:
-                        st.error(err)
-                        data = None
-
             elif typ == "Ruční vstup":
                 try:
                     data = np.array([float(v.strip()) for v in raw_text.split(",")])
                 except ValueError:
                     st.error("Chybný formát ručního vstupu! Zkontroluj čísla.")
+                    data = None
+
+        elif mode == "Nahrát CSV":
+            if uploaded_file is None:
+                st.error("Nejprve nahraj CSV soubor.")
+                data = None
+            elif csv_column is None:
+                st.error("Vyber sloupec s časovou řadou.")
+                data = None
+            else:
+                _, data, meta, err = load_csv_series(
+                    uploaded_file,
+                    selected_column=csv_column,
+                    normalize=normalize_csv,
+                    start_index=csv_start_index,
+                    end_index=csv_end_index,
+                    has_header=csv_has_header,
+                    datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
+                    selection_mode="date" if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else "index",
+                    start_date=csv_start_date if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else None,
+                    end_date=csv_end_date if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else None,
+                    aggregation_freq=aggregation_freq_main,
+                    aggregation_method=aggregation_method_main,
+                )
+
+                if err:
+                    st.error(err)
                     data = None
 
         else:  # Chaotické generátory
@@ -1054,40 +1102,41 @@ if analysis_mode == "Časová řada → HVG":
             elif chaos_typ == "1/f šum (pink noise)":
                 data = generate_pink_noise(length)
 
-        st.session_state.data = data
-        st.session_state.meta = meta
-        
-        if typ == "Nahrát CSV" and data is not None:
-            st.session_state.series_name = csv_column
-            st.session_state.series_normalized = normalize_csv
-            st.session_state.series_aggregation = aggregation_freq_main
-        elif data is not None:
-            st.session_state.series_name = typ if typ is not None else chaos_typ
-            st.session_state.series_normalized = False
-            st.session_state.series_aggregation = None
-        
-        if data is not None:
-            st.success(f"Načteno {len(data)} hodnot.")
-            if typ == "Nahrát CSV":
-                if meta is not None and meta["datetime_used"]:
-                    if meta["selection_mode"] == "date":
-                        st.caption(f"Datový rozsah: {csv_start_date} → {csv_end_date}")
+            st.session_state.data = data
+            st.session_state.meta = meta
+            
+            if mode == "Nahrát CSV" and data is not None:
+                st.session_state.series_name = csv_column
+                st.session_state.series_normalized = normalize_csv
+                st.session_state.series_aggregation = aggregation_freq_main
+            elif data is not None:
+                st.session_state.series_name = typ if typ is not None else chaos_typ
+                st.session_state.series_normalized = False
+                st.session_state.series_aggregation = None
+            
+            if data is not None:
+                st.success(f"Načteno {len(data)} hodnot.")
+                if mode == "Nahrát CSV":
+                    if meta is not None and meta["datetime_used"]:
+                        if meta["selection_mode"] == "date":
+                            st.caption(f"Datový rozsah: {csv_start_date} → {csv_end_date}")
+                        else:
+                            st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
+
+                        if meta["aggregation_freq"] not in (None, "bez agregace"):
+                            st.caption(
+                                f"Agregace: {meta['aggregation_freq']} | metoda: {meta['aggregation_method']}"
+                            )
+
+                        if meta["min_time"] is not None and meta["max_time"] is not None:
+                            st.caption(
+                                f"Výsledná časová řada pokrývá: {meta['min_time']} → {meta['max_time']}"
+                            )
                     else:
                         st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
+            st.session_state.show_hvg = False
+            st.session_state.show_horiz = False
 
-                    if meta["aggregation_freq"] not in (None, "bez agregace"):
-                        st.caption(
-                            f"Agregace: {meta['aggregation_freq']} | metoda: {meta['aggregation_method']}"
-                        )
-
-                    if meta["min_time"] is not None and meta["max_time"] is not None:
-                        st.caption(
-                            f"Výsledná časová řada pokrývá: {meta['min_time']} → {meta['max_time']}"
-                        )
-                else:
-                    st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
-        st.session_state.show_hvg = False
-        st.session_state.show_horiz = False
 
     # =========================
     #  Zobrazení časové řady + HVG linky
