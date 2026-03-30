@@ -2606,14 +2606,14 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                     col1, col2 = st.sidebar.columns(2)
 
                     with col1:
-                        source_col = st.selectbox(
+                        source_col = st.sidebar.selectbox(
                             "Zdroj (source)",
                             edges_df.columns.tolist(),
                             key="edge_source_col",
                         )
 
                     with col2:
-                        target_col = st.selectbox(
+                        target_col = st.sidebar.selectbox(
                             "Cíl (target)",
                             edges_df.columns.tolist(),
                             key="edge_target_col",
@@ -2637,6 +2637,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
 
     # Hlavní obsah pro vlastní graf
     st.markdown("## Vlastní HVG graf (analýza)")
+    selected_sections_custom = []
 
     if st.session_state.custom_graph is not None:
         Gc = st.session_state.custom_graph
@@ -2689,56 +2690,140 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         analyzer_c = SmallWorldAnalyzer(C_c, L_c, C_rand_c, L_rand_c)
         sigma_c = analyzer_c.sigma
 
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            
-            st.markdown("**Základní metriky vlastního grafu**")
-            st.write(f"- Počet vrcholů: **{n_nodes_c}**")
-            st.write(f"- Počet hran: **{n_edges_c}**")
-            st.write(f"- Průměrný stupeň: **{avg_deg_c:.3f}**")
-            st.write(f"- Shannonova entropie stupňů: **{entropy_deg_c:.3f}**")
-            st.write(f"- Normalizovaná entropie stupňů: **{entropy_deg_norm_c:.3f}**")
-            if L_c is not None:
-                st.write(f"- Průměrná délka cesty L: **{L_c:.3f}**")
-            else:
-                st.write(
-                    "- Průměrná délka cesty L: *nelze spočítat (nesouvislý nebo příliš malý graf)*"
-                )
-            if diam_c is not None:
-                st.write(f"- Diametr grafu: **{diam_c}**")
-            else:
-                st.write("- Diametr grafu: *není k dispozici*")
+        # =========================
+        # Konfigurační graf (null model) pro vlastní HVG
+        # =========================
+        Gc_conf = build_configuration_graph_from_hvg(Gc, seed=42)
 
-        with col_c2:
-            st.markdown("**Clustering a small-world charakter (vlastní HVG graf)**")
-            st.write(f"- Clustering coefficient C: **{C_c:.3f}**")
-            if L_rand_c is not None and C_rand_c is not None and C_rand_c != 0:
-                st.write(
-                    "- Náhodný graf (pro porovnání):  \n"
-                    f"  - L_rand ≈ **{L_rand_c:.3f}**  \n"
-                    f"  - C_rand ≈ **{C_rand_c:.5f}**"
-                )
-            else:
-                st.write("- Náhodný graf (L_rand, C_rand): *nelze odhadnout*")
+        n_nodes_conf_c = Gc_conf.number_of_nodes()
+        n_edges_conf_c = Gc_conf.number_of_edges()
+        degrees_conf_c = [d for _, d in Gc_conf.degree()]
+        avg_deg_conf_c = float(np.mean(degrees_conf_c)) if len(degrees_conf_c) > 0 else 0.0
 
-            if sigma_c is not None and not np.isnan(sigma_c):
-                st.write(
-                    f"- Small-world index σ "
-                    f"(σ > 1: small-world, σ ≈ 1: podobné náhodnému grafu, σ < 1: není small-world): "
-                    f"**{sigma_c:.2f}**"
-                )
-                level_c, msg_c = analyzer_c.interpretation(atol=0.05)
-                if level_c == "success":
-                    st.success(msg_c)
-                elif level_c == "warning":
-                    st.warning(msg_c)
+        try:
+            C_conf_c = nx.average_clustering(Gc_conf)
+        except Exception:
+            C_conf_c = float("nan")
+
+        is_conn_conf_c = nx.is_connected(Gc_conf) if n_nodes_conf_c > 0 else False
+        L_conf_c = None
+        diam_conf_c = None
+        if is_conn_conf_c and n_nodes_conf_c > 1:
+            try:
+                L_conf_c = nx.average_shortest_path_length(Gc_conf)
+            except Exception:
+                L_conf_c = None
+            try:
+                diam_conf_c = nx.diameter(Gc_conf)
+            except Exception:
+                diam_conf_c = None
+
+        try:
+            assort_conf_c = nx.degree_assortativity_coefficient(Gc_conf)
+        except Exception:
+            assort_conf_c = None
+
+        L_rand_conf_c = None
+        C_rand_conf_c = None
+        if n_nodes_conf_c > 1 and avg_deg_conf_c > 1:
+            try:
+                L_rand_conf_c = np.log(n_nodes_conf_c) / np.log(avg_deg_conf_c)
+                C_rand_conf_c = avg_deg_conf_c / n_nodes_conf_c
+            except Exception:
+                L_rand_conf_c = None
+                C_rand_conf_c = None
+
+        sigma_conf_c = None
+        if (
+            C_conf_c is not None
+            and L_conf_c is not None
+            and L_rand_conf_c is not None
+            and C_rand_conf_c not in (None, 0)
+        ):
+            try:
+                sigma_conf_c = (C_conf_c / C_rand_conf_c) / (L_conf_c / L_rand_conf_c)
+            except Exception:
+                sigma_conf_c = None
+
+        # =========================
+        # Výběr sekcí pro vlastní HVG graf
+        # =========================
+        section_options_custom = [
+            "Metriky HVG",
+            "Podgraf HVG",
+            "Rozdělení stupňů + power-law",
+            "Konfigurační graf (null model)",
+            "Shrnutí analýzy",
+            "Export HVG a metrik",
+        ]
+
+        selected_sections_custom = st.multiselect(
+            "Co chceš u vlastního HVG grafu zobrazit?",
+            options=section_options_custom,
+            default=[
+                "Metriky HVG",
+                "Rozdělení stupňů + power-law",
+                "Shrnutí analýzy",
+                "Export HVG a metrik",
+            ],
+            key="custom_hvg_sections",
+        )
+        
+        # =========================
+        # Metriky HVG
+        # =========================
+        if "Metriky HVG" in selected_sections_custom:
+            col_c1, col_c2 = st.columns(2)
+
+            with col_c1:
+                st.markdown("**Základní metriky vlastního HVG grafu**")
+                st.write(f"- Počet vrcholů: **{n_nodes_c}**")
+                st.write(f"- Počet hran: **{n_edges_c}**")
+                st.write(f"- Průměrný stupeň: **{avg_deg_c:.3f}**")
+                st.write(f"- Shannonova entropie stupňů: **{entropy_deg_c:.3f}**")
+                st.write(f"- Normalizovaná entropie stupňů: **{entropy_deg_norm_c:.3f}**")
+
+                if L_c is not None:
+                    st.write(f"- Průměrná délka cesty L: **{L_c:.3f}**")
                 else:
-                    st.info(msg_c)
-            else:
-                st.write(
-                    "- Small-world index σ: *nelze spočítat "
-                    "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
-                )
+                    st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý nebo příliš malý graf)*")
+
+                if diam_c is not None:
+                    st.write(f"- Diametr grafu: **{diam_c}**")
+                else:
+                    st.write("- Diametr grafu: *není k dispozici*")
+
+            with col_c2:
+                st.markdown("**Clustering a small-world charakter (vlastní HVG graf)**")
+                st.write(f"- Clustering coefficient C: **{C_c:.3f}**")
+
+                if L_rand_c is not None and C_rand_c is not None and C_rand_c != 0:
+                    st.write(
+                        "- Náhodný graf (pro porovnání):  \n"
+                        f"  - L_rand ≈ **{L_rand_c:.3f}**  \n"
+                        f"  - C_rand ≈ **{C_rand_c:.5f}**"
+                    )
+                else:
+                    st.write("- Náhodný graf (L_rand, C_rand): *nelze odhadnout*")
+
+                if sigma_c is not None and not np.isnan(sigma_c):
+                    st.write(
+                        f"- Small-world index σ "
+                        f"(σ > 1: small-world, σ ≈ 1: podobné náhodnému grafu, σ < 1: není small-world): "
+                        f"**{sigma_c:.2f}**"
+                    )
+                    level_c, msg_c = analyzer_c.interpretation(atol=0.05)
+                    if level_c == "success":
+                        st.success(msg_c)
+                    elif level_c == "warning":
+                        st.warning(msg_c)
+                    else:
+                        st.info(msg_c)
+                else:
+                    st.write(
+                        "- Small-world index σ: *nelze spočítat "
+                        "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
+                    )
 
         # Vizualizace vlastního grafu
         st.subheader("Vizuální zobrazení vlastního grafu")
@@ -2794,6 +2879,543 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
     else:
         st.info("Nejprve zadej vlastní HVG graf v levém panelu (node/edge list nebo CSV).")
 
+        # =========================
+        # Podgraf HVG
+        # =========================
+    if "Podgraf HVG" in selected_sections_custom:
+        st.subheader("Podgraf HVG podle vybraných vrcholů")
+
+        sub_nodes_text_c = st.text_input(
+            "Seznam vrcholů pro podgraf (oddělené čárkou, mezerou nebo středníkem)",
+            value="1, 2, 3",
+            key="custom_subgraph_nodes",
+        )
+
+        tokens_c = [t.strip() for t in re.split(r"[,\s;]+", sub_nodes_text_c) if t.strip() != ""]
+        available_nodes_c = {str(n): n for n in Gc.nodes()}
+        valid_nodes_c = [available_nodes_c[t] for t in tokens_c if t in available_nodes_c]
+
+        valid_nodes_c = list(dict.fromkeys(valid_nodes_c))
+
+        if len(valid_nodes_c) == 0:
+            st.info("Nebyl zadán žádný platný vrchol existující v grafu.")
+        else:
+            Gc_sub = Gc.subgraph(valid_nodes_c).copy()
+
+            st.write(
+                f"Podgraf obsahuje **{Gc_sub.number_of_nodes()}** vrcholů a **{Gc_sub.number_of_edges()}** hran."
+            )
+
+            degs_sub_c = [d for _, d in Gc_sub.degree()]
+            avg_deg_sub_c = float(np.mean(degs_sub_c)) if len(degs_sub_c) > 0 else 0.0
+
+            try:
+                C_sub_c = nx.average_clustering(Gc_sub)
+            except Exception:
+                C_sub_c = float('nan')
+
+            is_conn_sub_c = nx.is_connected(Gc_sub) if Gc_sub.number_of_nodes() > 0 else False
+            L_sub_c = None
+            diam_sub_c = None
+
+            if is_conn_sub_c and Gc_sub.number_of_nodes() > 1:
+                try:
+                    L_sub_c = nx.average_shortest_path_length(Gc_sub)
+                except Exception:
+                    L_sub_c = None
+                try:
+                    diam_sub_c = nx.diameter(Gc_sub)
+                except Exception:
+                    diam_sub_c = None
+
+            st.write(f"- Průměrný stupeň v podgrafu: **{avg_deg_sub_c:.3f}**")
+            st.write(f"- Clustering v podgrafu: **{C_sub_c:.3f}**")
+            if L_sub_c is not None:
+                st.write(f"- Průměrná délka cesty v podgrafu: **{L_sub_c:.3f}**")
+            if diam_sub_c is not None:
+                st.write(f"- Průměr podgrafu: **{diam_sub_c}**")
+
+            pos_sub_c = nx.spring_layout(Gc_sub, seed=42)
+
+            edge_x_sub_c, edge_y_sub_c = [], []
+            for u, v in Gc_sub.edges():
+                x0, y0 = pos_sub_c[u]
+                x1, y1 = pos_sub_c[v]
+                edge_x_sub_c += [x0, x1, None]
+                edge_y_sub_c += [y0, y1, None]
+
+            node_x_sub_c, node_y_sub_c = [], []
+            for node in Gc_sub.nodes():
+                x, y = pos_sub_c[node]
+                node_x_sub_c.append(x)
+                node_y_sub_c.append(y)
+
+            edge_trace_sub_c = go.Scatter(
+                x=edge_x_sub_c,
+                y=edge_y_sub_c,
+                mode="lines",
+                line=dict(width=1, color="#888"),
+                hoverinfo="none",
+            )
+
+            node_trace_sub_c = go.Scatter(
+                x=node_x_sub_c,
+                y=node_y_sub_c,
+                mode="markers+text",
+                text=[str(n) for n in Gc_sub.nodes()],
+                textposition="bottom center",
+                marker=dict(size=10, color="lightcoral", line_width=1),
+                hoverinfo="text",
+                hovertext=[f"Vrchol: {n}" for n in Gc_sub.nodes()],
+            )
+
+            fig_sub_c = go.Figure(data=[edge_trace_sub_c, node_trace_sub_c])
+            fig_sub_c.update_layout(
+                title="Podgraf vlastního HVG grafu",
+                showlegend=False,
+                hovermode="closest",
+                margin=dict(b=20, l=5, r=5, t=40),
+            )
+            st.plotly_chart(fig_sub_c, use_container_width=True)
+
+    # =========================
+    # Rozdělení stupňů + power-law
+    # =========================
+    if "Rozdělení stupňů + power-law" in selected_sections_custom:
+        st.subheader("Rozdělení stupňů vlastního HVG grafu")
+
+        degs_c = degrees_c
+        unique_deg_c, counts_c = np.unique(degs_c, return_counts=True)
+        pk_c = counts_c / counts_c.sum()
+
+        entropy_deg_c = -np.sum(pk_c * np.log(pk_c)) if len(pk_c) > 0 else 0.0
+
+        if len(unique_deg_c) > 1:
+            entropy_deg_norm_c = entropy_deg_c / np.log(len(unique_deg_c))
+        else:
+            entropy_deg_norm_c = 0.0
+
+        if entropy_deg_norm_c < 0.2:
+            entropy_level_c = "velmi nízká"
+            entropy_text_c = "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované."
+        elif entropy_deg_norm_c < 0.4:
+            entropy_level_c = "nízká"
+            entropy_text_c = "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené."
+        elif entropy_deg_norm_c < 0.6:
+            entropy_level_c = "střední"
+            entropy_text_c = "Stupňové rozdělení je středně rozptýlené."
+        elif entropy_deg_norm_c < 0.8:
+            entropy_level_c = "vysoká"
+            entropy_text_c = "Vrcholy mají rozmanitější stupně a rozdělení je výrazněji rozptýlené."
+        else:
+            entropy_level_c = "velmi vysoká"
+            entropy_text_c = "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené."
+
+        col_deg_c1, col_deg_c2, col_deg_c3, col_deg_c4, col_deg_c5 = st.columns(5)
+        with col_deg_c1:
+            st.metric("Průměrný stupeň", f"{np.mean(degs_c):.3f}")
+        with col_deg_c2:
+            st.metric("Medián stupně", f"{np.median(degs_c):.3f}")
+        with col_deg_c3:
+            st.metric("Maximální stupeň", f"{np.max(degs_c)}")
+        with col_deg_c4:
+            st.metric("Shannonova entropie", f"{entropy_deg_c:.3f}")
+        with col_deg_c5:
+            st.metric("Norm. entropie", f"{entropy_deg_norm_c:.3f}")
+            st.caption(entropy_level_c)
+
+        st.info(
+            f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm_c:.3f}**, "
+            f"což odpovídá kategorii **{entropy_level_c}**. {entropy_text_c}"
+        )
+
+        df_deg_c = pd.DataFrame({"degree": degs_c})
+        fig_hist_c = px.histogram(
+            df_deg_c,
+            x="degree",
+            nbins=max(degs_c) + 1,
+            title="Histogram stupňů",
+            labels={"degree": "Stupeň"},
+            opacity=0.7,
+        )
+        fig_hist_c.update_layout(yaxis_title="Počet vrcholů")
+        st.plotly_chart(fig_hist_c, use_container_width=True)
+
+        st.subheader("PDF stupňového rozdělení")
+        df_pdf_c = pd.DataFrame({"degree": unique_deg_c, "pk": pk_c})
+        fig_pdf_c = px.line(
+            df_pdf_c,
+            x="degree",
+            y="pk",
+            markers=True,
+            title="PDF stupňového rozdělení P(k)",
+            labels={"degree": "Stupeň k", "pk": "P(k)"},
+        )
+        fig_pdf_c.update_layout(
+            xaxis_title="Stupeň k",
+            yaxis_title="Pravděpodobnost P(k)",
+        )
+        st.plotly_chart(fig_pdf_c, use_container_width=True)
+
+        st.subheader("CDF stupňového rozdělení")
+        cdf_vals_c = np.cumsum(pk_c)
+        df_cdf_c = pd.DataFrame({"degree": unique_deg_c, "cdf": cdf_vals_c})
+        fig_cdf_c = px.line(
+            df_cdf_c,
+            x="degree",
+            y="cdf",
+            markers=True,
+            title="CDF stupňového rozdělení F(k)",
+            labels={"degree": "Stupeň k", "cdf": "F(k) = P(K ≤ k)"},
+        )
+        fig_cdf_c.update_layout(
+            xaxis_title="Stupeň k",
+            yaxis_title="Kumulativní pravděpodobnost F(k)",
+            yaxis_range=[0, 1.05],
+        )
+        st.plotly_chart(fig_cdf_c, use_container_width=True)
+
+        do_powerlaw_custom = st.checkbox(
+            "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
+            key="powerlaw_custom_global",
+        )
+
+        powerlaw_p_result_c = None
+        powerlaw_R_result_c = None
+        alpha_powerlaw_c = None
+        xmin_powerlaw_c = None
+
+        if do_powerlaw_custom:
+            if not HAS_POWERLAW:
+                st.warning(
+                    "K provedení testu je potřeba balík `powerlaw`. "
+                    "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
+                )
+            else:
+                degs_for_fit_c = np.array([d for d in degs_c if d > 0])
+
+                if len(degs_for_fit_c) < 10:
+                    st.info("Graf má příliš málo vrcholů pro smysluplný power-law fit.")
+                else:
+                    try:
+                        import powerlaw
+
+                        fit_c = powerlaw.Fit(
+                            degs_for_fit_c,
+                            discrete=True,
+                            verbose=False,
+                        )
+
+                        alpha_powerlaw_c = fit_c.power_law.alpha
+                        xmin_powerlaw_c = fit_c.power_law.xmin
+
+                        R_c, p_c = fit_c.distribution_compare(
+                            "power_law", "exponential"
+                        )
+
+                        powerlaw_R_result_c = R_c
+                        powerlaw_p_result_c = p_c
+
+                        st.markdown("**Výsledek power-law analýzy:**")
+                        st.write(f"- Odhadnutý exponent α: **{alpha_powerlaw_c:.3f}**")
+                        st.write(f"- Odhadnuté k_min: **{xmin_powerlaw_c}**")
+                        st.write(f"- Likelihood ratio R: **{R_c:.3f}**")
+                        st.write(f"- p-hodnota: **{p_c:.3f}**")
+
+                        if p_c < 0.1:
+                            if R_c > 0:
+                                st.success(
+                                    "Graf je kompatibilní s power-law a power-law je preferovaný oproti exponenciálnímu rozdělení."
+                                )
+                            else:
+                                st.warning(
+                                    "Power-law model je horší než exponenciální rozdělení."
+                                )
+                        else:
+                            st.info(
+                                "Test je neprůkazný. Nelze spolehlivě rozhodnout."
+                            )
+
+                        unique_sorted_c = np.sort(np.unique(degs_for_fit_c))
+                        ccdf_vals_c = np.array(
+                            [
+                                np.sum(degs_for_fit_c >= k) / len(degs_for_fit_c)
+                                for k in unique_sorted_c
+                            ]
+                        )
+
+                        mask_c = unique_sorted_c >= xmin_powerlaw_c
+                        if np.sum(mask_c) >= 2:
+                            k_emp_c = unique_sorted_c[mask_c]
+                            ccdf_emp_c = ccdf_vals_c[mask_c]
+
+                            k_theory_c = np.linspace(xmin_powerlaw_c, k_emp_c.max(), 100)
+                            ccdf_theory_c = (k_theory_c / xmin_powerlaw_c) ** (1 - alpha_powerlaw_c)
+                            ccdf_theory_c *= ccdf_emp_c[0] / ccdf_theory_c[0]
+
+                            fig_ccdf_c = go.Figure()
+                            fig_ccdf_c.add_trace(
+                                go.Scatter(
+                                    x=k_emp_c,
+                                    y=ccdf_emp_c,
+                                    mode="markers",
+                                    name="Empirická CCDF",
+                                )
+                            )
+                            fig_ccdf_c.add_trace(
+                                go.Scatter(
+                                    x=k_theory_c,
+                                    y=ccdf_theory_c,
+                                    mode="lines",
+                                    name=f"Power-law fit (α={alpha_powerlaw_c:.2f})",
+                                )
+                            )
+                            fig_ccdf_c.update_layout(
+                                title="CCDF stupňového rozdělení (empirická vs. power-law fit)",
+                                xaxis_type="log",
+                                yaxis_type="log",
+                                xaxis_title="Stupeň k",
+                                yaxis_title="P(K ≥ k)",
+                                legend=dict(x=0.02, y=0.98),
+                                margin=dict(b=40, l=50, r=10, t=50),
+                            )
+                            st.plotly_chart(fig_ccdf_c, use_container_width=True)
+                        else:
+                            st.info("Tail rozdělení je příliš krátký na smysluplný CCDF graf.")
+
+                    except Exception as e:
+                        st.info(f"Power-law test se nepodařilo spolehlivě vyhodnotit: {e}")
+                        
+    # =========================
+    # Konfigurační graf (null model)
+    # =========================
+    if "Konfigurační graf (null model)" in selected_sections_custom:
+        st.subheader("Konfigurační graf (null model)")
+
+        col_conf_c1, col_conf_c2 = st.columns(2)
+
+        with col_conf_c1:
+            st.markdown("**Konfigurační graf – základní metriky**")
+            st.write(f"- Počet vrcholů: **{n_nodes_conf_c}**")
+            st.write(f"- Počet hran: **{n_edges_conf_c}**")
+            st.write(f"- Průměrný stupeň: **{avg_deg_conf_c:.3f}**")
+            if L_conf_c is not None:
+                st.write(f"- Průměrná délka cesty L_conf: **{L_conf_c:.3f}**")
+            else:
+                st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
+            if diam_conf_c is not None:
+                st.write(f"- Průměr grafu (diameter_conf): **{diam_conf_c}**")
+            else:
+                st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
+
+        with col_conf_c2:
+            st.markdown("**Konfigurační graf – clustering, assortativita, σ_conf**")
+            st.write(f"- Clustering coefficient C_conf: **{C_conf_c:.3f}**")
+            if assort_conf_c is not None and not np.isnan(assort_conf_c):
+                st.write(f"- Degree assortativity_conf: **{assort_conf_c:.3f}**")
+            else:
+                st.write("- Degree assortativity_conf: *není k dispozici*")
+
+            if L_rand_conf_c is not None and C_rand_conf_c is not None and C_rand_conf_c != 0:
+                st.write(
+                    "- Náhodný graf pro konfigurační model (odhad):  \n"
+                    f"  - L_rand_conf ≈ **{L_rand_conf_c:.3f}**  \n"
+                    f"  - C_rand_conf ≈ **{C_rand_conf_c:.5f}**"
+                )
+            else:
+                st.write("- L_rand_conf, C_rand_conf: *nelze odhadnout*")
+
+            if sigma_conf_c is not None and not np.isnan(sigma_conf_c):
+                st.write(f"- Small-world index σ_conf: **{sigma_conf_c:.2f}**")
+
+        st.markdown("**Porovnání vlastního HVG grafu vs. konfigurační graf**")
+
+        if not np.isnan(C_c) and not np.isnan(C_conf_c):
+            st.write(
+                f"- Clustering HVG: **{C_c:.3f}**, konfigurační graf C_conf: **{C_conf_c:.3f}**"
+            )
+
+        if (L_c is not None) and (L_conf_c is not None):
+            st.write(
+                f"- Průměrná délka cesty L (HVG): **{L_c:.3f}**, L_conf: **{L_conf_c:.3f}**"
+            )
+
+        if sigma_c is not None and sigma_conf_c is not None:
+            st.write(
+                f"- Small-world index HVG: **{sigma_c:.2f}**, konfigurační graf σ_conf: **{sigma_conf_c:.2f}**"
+            )
+
+        st.subheader("Konfigurační graf (vizualizace)")
+        pos_conf_c = nx.spring_layout(Gc_conf, seed=42)
+
+        edge_x_conf_c, edge_y_conf_c = [], []
+        for u, v in Gc_conf.edges():
+            x0, y0 = pos_conf_c[u]
+            x1, y1 = pos_conf_c[v]
+            edge_x_conf_c += [x0, x1, None]
+            edge_y_conf_c += [y0, y1, None]
+
+        edge_trace_conf_c = go.Scatter(
+            x=edge_x_conf_c,
+            y=edge_y_conf_c,
+            mode="lines",
+            line=dict(width=1, color="#aaa"),
+            hoverinfo="none",
+        )
+
+        node_x_conf_c, node_y_conf_c = [], []
+        for node in Gc_conf.nodes():
+            x, y = pos_conf_c[node]
+            node_x_conf_c.append(x)
+            node_y_conf_c.append(y)
+
+        node_trace_conf_c = go.Scatter(
+            x=node_x_conf_c,
+            y=node_y_conf_c,
+            mode="markers",
+            hoverinfo="none",
+            marker=dict(size=8, color="lightgreen", line_width=1),
+        )
+
+        fig_conf_c = go.Figure(data=[edge_trace_conf_c, node_trace_conf_c])
+        fig_conf_c.update_layout(
+            title="Konfigurační graf se stejnou stupňovou posloupností jako vlastní HVG graf",
+            showlegend=False,
+            hovermode="closest",
+            margin=dict(b=20, l=5, r=5, t=40),
+        )
+        st.plotly_chart(fig_conf_c, use_container_width=True)
+    # =========================
+    # Shrnutí analýzy
+    # =========================
+    if "Shrnutí analýzy" in selected_sections_custom:
+        st.subheader("Shrnutí analýzy")
+
+        col_sum_c1, col_sum_c2, col_sum_c3 = st.columns(3)
+
+        with col_sum_c1:
+            st.metric("Počet vrcholů", n_nodes_c)
+            st.metric("Počet hran", n_edges_c)
+
+        with col_sum_c2:
+            st.metric("Průměrný stupeň", f"{avg_deg_c:.3f}")
+            st.metric("Clustering", f"{C_c:.3f}" if not np.isnan(C_c) else "N/A")
+
+        with col_sum_c3:
+            st.metric("Průměrná délka cesty", f"{L_c:.3f}" if L_c is not None else "N/A")
+            st.metric(
+                "Small-world index σ",
+                f"{sigma_c:.2f}" if sigma_c is not None and not np.isnan(sigma_c) else "N/A"
+            )
+
+        technical_parts_c = []
+        interpretation_parts_c = []
+        verdict_parts_c = []
+
+        technical_parts_c.append(
+            f"Graf obsahuje {n_nodes_c} vrcholů a {n_edges_c} hran, přičemž průměrný stupeň vrcholu je {avg_deg_c:.3f}."
+        )
+
+        if C_c is not None and not np.isnan(C_c):
+            if C_c >= 0.4:
+                technical_parts_c.append("Graf vykazuje vyšší lokální propojenost.")
+            elif C_c >= 0.2:
+                technical_parts_c.append("Graf vykazuje střední lokální propojenost.")
+            else:
+                technical_parts_c.append("Graf má nízkou lokální propojenost.")
+
+        if L_c is not None:
+            technical_parts_c.append(
+                f"Průměrná délka cesty je {L_c:.3f}."
+            )
+
+        if sigma_c is not None and not np.isnan(sigma_c):
+            if sigma_c > 1.1:
+                interpretation_parts_c.append("Graf vykazuje výraznější small-world charakter.")
+            elif sigma_c >= 0.9:
+                interpretation_parts_c.append("Graf je svým small-world charakterem blízký náhodnému grafu.")
+            else:
+                interpretation_parts_c.append("Graf nevykazuje výrazný small-world charakter.")
+
+        if entropy_deg_norm_c < 0.35:
+            interpretation_parts_c.append("Stupňové rozdělení je spíše koncentrované a graf působí strukturálně pravidelněji.")
+        elif entropy_deg_norm_c < 0.65:
+            interpretation_parts_c.append("Stupňové rozdělení je středně variabilní a graf kombinuje pravidelnost i heterogenitu.")
+        else:
+            interpretation_parts_c.append("Stupňové rozdělení je výrazně variabilní a graf působí heterogenněji.")
+
+        if sigma_c is not None and not np.isnan(sigma_c) and C_c is not None and not np.isnan(C_c):
+            if sigma_c > 1.1 and C_c >= 0.3:
+                verdict_parts_c.append("Celkově graf vykazuje organizovanější a strukturálně výraznější topologii.")
+            elif sigma_c < 1 and C_c < 0.2:
+                verdict_parts_c.append("Celkově graf působí méně strukturovaně a je bližší náhodnému charakteru.")
+            else:
+                verdict_parts_c.append("Celkově graf vykazuje středně výraznou strukturu bez jednoznačně extrémního charakteru.")
+
+        st.markdown("**Technické shrnutí**")
+        st.info(" ".join(technical_parts_c))
+
+        st.markdown("**Interpretace grafu**")
+        st.write(" ".join(interpretation_parts_c))
+
+        st.markdown("**Závěrečný verdikt**")
+        st.success(" ".join(verdict_parts_c))
+
+    # =========================
+    # Export HVG a metrik
+    # =========================
+    if "Export HVG a metrik" in selected_sections_custom:
+        st.subheader("Export HVG a metrik")
+
+        edges_df_c = pd.DataFrame(list(Gc.edges()), columns=["source", "target"])
+        edges_csv_c = edges_df_c.to_csv(index=False).encode("utf-8")
+
+        adj_df_c = nx.to_pandas_adjacency(Gc)
+        adj_csv_c = adj_df_c.to_csv().encode("utf-8")
+
+        metrics_dict_c = {
+            "n_nodes": n_nodes_c,
+            "n_edges": n_edges_c,
+            "avg_degree": avg_deg_c,
+            "C": C_c,
+            "L": L_c,
+            "diameter": diam_c,
+            "L_rand": L_rand_c,
+            "C_rand": C_rand_c,
+            "sigma": sigma_c,
+            "entropy_deg": entropy_deg_c,
+            "entropy_deg_norm": entropy_deg_norm_c,
+            "sigma_conf": sigma_conf_c,
+        }
+
+        metrics_df_c = pd.DataFrame([metrics_dict_c])
+        metrics_csv_c = metrics_df_c.to_csv(index=False).encode("utf-8")
+
+        col_exp_c1, col_exp_c2, col_exp_c3 = st.columns(3)
+
+        with col_exp_c1:
+            st.download_button(
+                "Exportovat HVG jako edge list (CSV)",
+                data=edges_csv_c,
+                file_name="custom_hvg_edgelist.csv",
+                mime="text/csv",
+            )
+
+        with col_exp_c2:
+            st.download_button(
+                "Exportovat HVG jako adjacency matrix (CSV)",
+                data=adj_csv_c,
+                file_name="custom_hvg_adjacency.csv",
+                mime="text/csv",
+            )
+
+        with col_exp_c3:
+            st.download_button(
+                "Exportovat metriky HVG (CSV)",
+                data=metrics_csv_c,
+                file_name="custom_hvg_metrics.csv",
+                mime="text/csv",
+            )                            
 # =====================================================================
 #  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
 # =====================================================================
