@@ -1050,11 +1050,14 @@ if analysis_mode == "Časová řada → HVG":
         if mode == "Standardní signály":
             if typ == "Náhodná uniformní":
                 data = np.random.uniform(low=low, high=high, size=length)
+
             elif typ == "Náhodná normální":
                 data = np.random.normal(loc=mu, scale=sigma, size=length)
+
             elif typ == "Sinusovka":
                 x = np.arange(length)
                 data = amp * np.sin(2 * np.pi * freq * x / length)
+
             elif typ == "Ruční vstup":
                 try:
                     data = np.array([float(v.strip()) for v in raw_text.split(",")])
@@ -1066,9 +1069,11 @@ if analysis_mode == "Časová řada → HVG":
             if uploaded_file is None:
                 st.error("Nejprve nahraj CSV soubor.")
                 data = None
+
             elif csv_column is None:
                 st.error("Vyber sloupec s časovou řadou.")
                 data = None
+
             else:
                 _, data, meta, err = load_csv_series(
                     uploaded_file,
@@ -1092,49 +1097,54 @@ if analysis_mode == "Časová řada → HVG":
         elif mode == "Chaotické generátory":
             if chaos_typ == "Logistická mapa":
                 data = generate_logistic_map(length, r=r, x0=x0, burn=burn_log)
+
             elif chaos_typ == "Henonova mapa":
                 data = generate_henon_map(
                     length, a=a, b=b, x0=x0, y0=y0, burn=burn_henon
                 )
+
             elif chaos_typ == "Lorenzův systém (x-složka)":
                 data = generate_lorenz_x(
                     length, dt=dt, sigma=sigma_l, rho=rho_l, beta=beta_l, burn=burn_lor
                 )
+
             elif chaos_typ == "1/f šum (pink noise)":
                 data = generate_pink_noise(length)
 
+        if data is not None:
             st.session_state.data = data
             st.session_state.meta = meta
-            
-            if mode == "Nahrát CSV" and data is not None:
+
+            if mode == "Nahrát CSV":
                 st.session_state.series_name = csv_column
                 st.session_state.series_normalized = normalize_csv
                 st.session_state.series_aggregation = aggregation_freq_main
-            elif data is not None:
+            else:
                 st.session_state.series_name = typ if typ is not None else chaos_typ
                 st.session_state.series_normalized = False
                 st.session_state.series_aggregation = None
-            
-            if data is not None:
-                st.success(f"Načteno {len(data)} hodnot.")
-                if mode == "Nahrát CSV":
-                    if meta is not None and meta["datetime_used"]:
-                        if meta["selection_mode"] == "date":
-                            st.caption(f"Datový rozsah: {csv_start_date} → {csv_end_date}")
-                        else:
-                            st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
 
-                        if meta["aggregation_freq"] not in (None, "bez agregace"):
-                            st.caption(
-                                f"Agregace: {meta['aggregation_freq']} | metoda: {meta['aggregation_method']}"
-                            )
+            st.success(f"Načteno {len(data)} hodnot.")
 
-                        if meta["min_time"] is not None and meta["max_time"] is not None:
-                            st.caption(
-                                f"Výsledná časová řada pokrývá: {meta['min_time']} → {meta['max_time']}"
-                            )
+            if mode == "Nahrát CSV":
+                if meta is not None and meta["datetime_used"]:
+                    if meta["selection_mode"] == "date":
+                        st.caption(f"Datový rozsah: {csv_start_date} → {csv_end_date}")
                     else:
                         st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
+
+                    if meta["aggregation_freq"] not in (None, "bez agregace"):
+                        st.caption(
+                            f"Agregace: {meta['aggregation_freq']} | metoda: {meta['aggregation_method']}"
+                        )
+
+                    if meta["min_time"] is not None and meta["max_time"] is not None:
+                        st.caption(
+                            f"Výsledná časová řada pokrývá: {meta['min_time']} → {meta['max_time']}"
+                        )
+                else:
+                    st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
+
             st.session_state.show_hvg = False
             st.session_state.show_horiz = False
 
@@ -2823,50 +2833,161 @@ else:  # "Porovnat dvě časové řady"
             except Exception:
                 sigma1c = None        
         # =============================
+        # =============================
         # Sidebar – nastavení série 2
         # =============================
-        st.sidebar.subheader("Série 2 – nastavení")
+        st.sidebar.subheader("Nastavení časové řady – Série 2")
 
-        src2 = st.sidebar.selectbox(
-            "Zdroj série 2",
-            [
-                "Nahrát CSV",
-                "Ruční vstup",
-                "Náhodná normální",
-                "Sinusovka",
-                "Chaotický generátor",
-            ],
-            index=0,
+        mode2 = st.sidebar.radio(
+            "Typ vstupu",
+            ["Standardní signály", "Chaotické generátory", "Nahrát CSV"],
+            key="mode_series_2",
         )
 
+        typ2 = None
+        chaos_typ2 = None
         data2_candidate = None
         meta2 = None
 
-        if src2 == "Nahrát CSV":
-            file2 = st.sidebar.file_uploader(
-                "CSV pro sérii 2", type="csv", key="csv_cmp_2"
+        selected_column2 = None
+        normalize_csv2 = False
+        aggregation_freq_cmp = "bez agregace"
+        aggregation_method_cmp = "mean"
+        csv2_start_index = 0
+        csv2_end_index = 0
+        csv2_start_date = None
+        csv2_end_date = None
+        csv2_datetime_column = "Žádný"
+        selection_mode_cmp = "index"
+        csv2_has_header = True
+        file2 = None
+
+        # -----------------------------
+        # Standardní signály – Série 2
+        # -----------------------------
+        if mode2 == "Standardní signály":
+            typ2 = st.sidebar.selectbox(
+                "Vyber typ časové řady",
+                [
+                    "Náhodná uniformní",
+                    "Náhodná normální",
+                    "Sinusovka",
+                    "Ruční vstup",
+                ],
+                key="typ_series_2",
             )
 
-            normalize_csv2 = st.sidebar.checkbox(
-                "Normalizovat sérii 2 (z-score)", value=False, key="csv2_norm"
-            )
-            if normalize_csv2:
-                st.sidebar.caption(
-                    "Série 2 je převedena na bezrozměrnou škálu (z-score). "
-                    "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
+            if typ2 == "Náhodná uniformní":
+                length2 = st.sidebar.slider("Délka řady", 10, 500, 50, key="len_uni_2")
+                low2 = st.sidebar.number_input(
+                    "Minimální hodnota", value=0.0, step=0.1, key="low_uni_2"
                 )
-            aggregation_freq_cmp = "bez agregace"
-            aggregation_method_cmp = "mean"
-            csv2_start_index = 0
-            csv2_end_index = 0
-            csv2_start_date = None
-            csv2_end_date = None
-            csv2_datetime_column = "Žádný"
-            selection_mode_cmp = "index"
+                high2 = st.sidebar.number_input(
+                    "Maximální hodnota", value=1.0, step=0.1, key="high_uni_2"
+                )
+
+            elif typ2 == "Náhodná normální":
+                length2 = st.sidebar.slider("Délka řady", 10, 500, 50, key="len_norm_2")
+                mu2 = st.sidebar.number_input("Střední hodnota μ", value=0.0, key="mu_norm_2")
+                sigma2 = st.sidebar.number_input("Směrodatná odchylka σ", value=1.0, key="sigma_norm_2")
+
+            elif typ2 == "Sinusovka":
+                length2 = st.sidebar.slider("Délka řady", 10, 500, 100, key="len_sin_2")
+                amp2 = st.sidebar.number_input("Amplituda", value=1.0, key="amp_sin_2")
+                freq2 = st.sidebar.number_input("Frekvence", value=1.0, key="freq_sin_2")
+
+            elif typ2 == "Ruční vstup":
+                txt2 = st.sidebar.text_area(
+                    "Zadej hodnoty oddělené čárkou",
+                    value="2, 4, 6, 8, 10",
+                    key="manual_series_2",
+                )
+
+        # -----------------------------
+        # Chaotické generátory – Série 2
+        # -----------------------------
+        elif mode2 == "Chaotické generátory":
+            chaos_typ2 = st.sidebar.selectbox(
+                "Vyber chaotický systém",
+                [
+                    "Logistická mapa",
+                    "Henonova mapa",
+                    "Lorenzův systém (x-složka)",
+                    "1/f šum (pink noise)",
+                ],
+                key="chaos_type_2",
+            )
+
+            if chaos_typ2 == "Logistická mapa":
+                length2 = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100, key="len_log_2")
+                r2 = st.sidebar.slider("Parametr r", 3.5, 4.0, 3.9, step=0.01, key="r_log_2")
+                x02 = st.sidebar.number_input(
+                    "Počáteční x₀",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.2,
+                    step=0.01,
+                    key="x0_log_2",
+                )
+                burn2 = st.sidebar.number_input(
+                    "Burn-in iterace",
+                    100,
+                    10000,
+                    500,
+                    step=100,
+                    key="burn_log_2",
+                )
+
+            elif chaos_typ2 == "Henonova mapa":
+                length2 = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100, key="len_hen_2")
+                a2 = st.sidebar.number_input("Parametr a", value=1.4, step=0.1, key="a_hen_2")
+                b2 = st.sidebar.number_input("Parametr b", value=0.3, step=0.05, key="b_hen_2")
+                x02 = st.sidebar.number_input("Počáteční x₀", value=0.1, step=0.05, key="x0_hen_2")
+                y02 = st.sidebar.number_input("Počáteční y₀", value=0.0, step=0.05, key="y0_hen_2")
+                burn2 = st.sidebar.number_input(
+                    "Burn-in iterace",
+                    100,
+                    10000,
+                    500,
+                    step=100,
+                    key="burn_hen_2",
+                )
+
+            elif chaos_typ2 == "Lorenzův systém (x-složka)":
+                length2 = st.sidebar.slider("Délka řady", 200, 10000, 2000, step=200, key="len_lor_2")
+                dt2 = st.sidebar.number_input(
+                    "Krok integrace dt",
+                    value=0.01,
+                    step=0.005,
+                    format="%.3f",
+                    key="dt_lor_2",
+                )
+                sigma_l2 = st.sidebar.number_input("σ (sigma)", value=10.0, step=1.0, key="sigma_lor_2")
+                rho_l2 = st.sidebar.number_input("ρ (rho)", value=28.0, step=1.0, key="rho_lor_2")
+                beta_l2 = st.sidebar.number_input("β (beta)", value=8 / 3, step=0.1, key="beta_lor_2")
+                burn2 = st.sidebar.number_input(
+                    "Burn-in kroků",
+                    500,
+                    20000,
+                    1000,
+                    step=500,
+                    key="burn_lor_2",
+                )
+
+            elif chaos_typ2 == "1/f šum (pink noise)":
+                length2 = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100, key="len_pink_2")
+
+        # -----------------------------
+        # Nahrát CSV – Série 2
+        # -----------------------------
+        elif mode2 == "Nahrát CSV":
+            file2 = st.sidebar.file_uploader(
+                "Nahraj CSV soubor", type="csv", key="csv_cmp_2"
+            )
 
             if file2 is not None:
                 csv2_has_header = st.sidebar.checkbox(
-                    "CSV série 2 má hlavičku", value=True, key="csv2_header"
+                    "CSV má hlavičku", value=True, key="csv2_header"
                 )
 
                 df2_preview, _, _, err = load_csv_series(
@@ -2877,18 +2998,19 @@ else:  # "Porovnat dvě časové řady"
                 if err:
                     st.sidebar.error(err)
                 else:
-                    st.sidebar.caption("Náhled CSV pro sérii 2:")
+                    st.sidebar.caption("Náhled (prvních 5 řádků):")
                     st.sidebar.dataframe(df2_preview.head(), use_container_width=True)
 
                     selected_column2 = st.sidebar.selectbox(
-                        "Sloupec s hodnotami (Série 2)",
+                        "Vyber sloupec s hodnotami časové řady",
                         df2_preview.columns.tolist(),
                         key="csv2_col",
                     )
+
                     datetime_options2 = ["Žádný"] + df2_preview.columns.tolist()
 
                     csv2_datetime_column = st.sidebar.selectbox(
-                        "Sloupec s datem/časem (Série 2, volitelné)",
+                        "Sloupec s datem/časem (volitelné)",
                         options=datetime_options2,
                         key="csv2_datetime_col",
                     )
@@ -2897,15 +3019,26 @@ else:  # "Porovnat dvě časové řady"
 
                     if csv2_datetime_column != "Žádný":
                         selection_mode_cmp = st.sidebar.radio(
-                            "Jak chceš vybírat rozsah Série 2?",
+                            "Jak chceš vybírat rozsah?",
                             ["Podle indexu", "Podle data"],
                             key="csv2_selection_mode",
                         )
 
-                        st.sidebar.markdown("**Agregace Série 2**")
+                    normalize_csv2 = st.sidebar.checkbox(
+                        "Normalizovat (z-score)", value=False, key="csv2_norm"
+                    )
+
+                    if normalize_csv2:
+                        st.sidebar.caption(
+                            "Data jsou převedena na bezrozměrnou škálu (z-score). "
+                            "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
+                        )
+
+                    if csv2_datetime_column != "Žádný":
+                        st.sidebar.markdown("**Agregace časové řady**")
 
                         aggregation_freq_cmp = st.sidebar.selectbox(
-                            "Agregační krok Série 2",
+                            "Agregační krok",
                             options=[
                                 "bez agregace",
                                 "1min",
@@ -2920,26 +3053,24 @@ else:  # "Porovnat dvě časové řady"
 
                         if aggregation_freq_cmp != "bez agregace":
                             aggregation_method_cmp = st.sidebar.selectbox(
-                                "Agregační metoda Série 2",
+                                "Agregační metoda",
                                 options=["mean", "median", "min", "max", "sum", "last"],
                                 key="csv2_agg_method",
                             )
-                        
-                        
-                    st.sidebar.markdown("**Výběr rozsahu dat pro sérii 2**")
 
-                    csv2_start_date = None
-                    csv2_end_date = None
+                    st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
 
                     if csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data":
-                        dt_series2 = pd.to_datetime(df2_preview[csv2_datetime_column], errors="coerce").dropna()
+                        dt_series2 = pd.to_datetime(
+                            df2_preview[csv2_datetime_column], errors="coerce"
+                        ).dropna()
 
                         if len(dt_series2) > 0:
                             min_dt2 = dt_series2.min()
                             max_dt2 = dt_series2.max()
 
                             csv2_start_date = st.sidebar.date_input(
-                                "Datum od série 2",
+                                "Datum od",
                                 value=min_dt2.date(),
                                 min_value=min_dt2.date(),
                                 max_value=max_dt2.date(),
@@ -2947,7 +3078,7 @@ else:  # "Porovnat dvě časové řady"
                             )
 
                             csv2_end_date = st.sidebar.date_input(
-                                "Datum do série 2",
+                                "Datum do",
                                 value=max_dt2.date(),
                                 min_value=min_dt2.date(),
                                 max_value=max_dt2.date(),
@@ -2976,7 +3107,8 @@ else:  # "Porovnat dvě časové řady"
                                     f"Po načtení vznikne přibližně {preview_meta2['n_points']} bodů časové řady."
                                 )
                         else:
-                            st.sidebar.warning("Ve vybraném datetime sloupci Série 2 nejsou platná data.")
+                            st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
+
                     else:
                         max_possible_index2 = max(0, len(df2_preview) - 1)
                         default_end_cmp = min(999, max_possible_index2)
@@ -3001,7 +3133,7 @@ else:  # "Porovnat dvě časové řady"
                         st.session_state.csv2_end_manual = end_tmp2
 
                         csv2_start_index, csv2_end_index = st.sidebar.slider(
-                            "Vyber rozsah řádků série 2",
+                            "Vyber rozsah řádků",
                             min_value=0,
                             max_value=max_possible_index2,
                             step=1,
@@ -3013,7 +3145,7 @@ else:  # "Porovnat dvě časové řady"
 
                         with col_range2_1:
                             st.number_input(
-                                "Od série 2",
+                                "Od",
                                 min_value=0,
                                 max_value=max_possible_index2,
                                 step=1,
@@ -3023,7 +3155,7 @@ else:  # "Porovnat dvě časové řady"
 
                         with col_range2_2:
                             st.number_input(
-                                "Do série 2",
+                                "Do",
                                 min_value=0,
                                 max_value=max_possible_index2,
                                 step=1,
@@ -3055,7 +3187,60 @@ else:  # "Porovnat dvě časové řady"
                             st.sidebar.caption(
                                 f"Po načtení vznikne přibližně {preview_meta2['n_points']} bodů časové řady."
                             )
-                    
+
+        generate2 = st.sidebar.button("Načíst / generovat sérii 2")        
+
+        if generate2:
+            if mode2 == "Standardní signály":
+                if typ2 == "Náhodná uniformní":
+                    data2_candidate = np.random.uniform(low=low2, high=high2, size=length2)
+
+                elif typ2 == "Náhodná normální":
+                    data2_candidate = np.random.normal(loc=mu2, scale=sigma2, size=length2)
+
+                elif typ2 == "Sinusovka":
+                    x2 = np.arange(length2)
+                    data2_candidate = amp2 * np.sin(2 * np.pi * freq2 * x2 / length2)
+
+                elif typ2 == "Ruční vstup":
+                    try:
+                        data2_candidate = np.array([float(v.strip()) for v in txt2.split(",")])
+                    except ValueError:
+                        st.sidebar.error("Chybný formát série 2.")
+                        data2_candidate = None
+
+            elif mode2 == "Chaotické generátory":
+                if chaos_typ2 == "Logistická mapa":
+                    data2_candidate = generate_logistic_map(length2, r=r2, x0=x02, burn=burn2)
+
+                elif chaos_typ2 == "Henonova mapa":
+                    data2_candidate = generate_henon_map(
+                        length2, a=a2, b=b2, x0=x02, y0=y02, burn=burn2
+                    )
+
+                elif chaos_typ2 == "Lorenzův systém (x-složka)":
+                    data2_candidate = generate_lorenz_x(
+                        length2,
+                        dt=dt2,
+                        sigma=sigma_l2,
+                        rho=rho_l2,
+                        beta=beta_l2,
+                        burn=burn2,
+                    )
+
+                elif chaos_typ2 == "1/f šum (pink noise)":
+                    data2_candidate = generate_pink_noise(length2)
+
+            elif mode2 == "Nahrát CSV":
+                if file2 is None:
+                    st.sidebar.error("Nejprve nahraj CSV soubor.")
+                    data2_candidate = None
+
+                elif selected_column2 is None:
+                    st.sidebar.error("Vyber sloupec s časovou řadou.")
+                    data2_candidate = None
+
+                else:
                     _, data2_candidate, meta2, err2 = load_csv_series(
                         file2,
                         selected_column=selected_column2,
@@ -3076,161 +3261,26 @@ else:  # "Porovnat dvě časové řady"
                         data2_candidate = None
                         meta2 = None
 
-        elif src2 == "Ruční vstup":
-            txt2 = st.sidebar.text_area("Hodnoty série 2 (čárka)", "2, 4, 6, 8, 10")
-            try:
-                data2_candidate = np.array([float(v.strip()) for v in txt2.split(",")])
-            except ValueError:
-                st.sidebar.error("Chybný formát série 2.")
-
-        elif src2 == "Náhodná normální":
-            length2 = st.sidebar.slider("Délka série 2", 10, 1000, 100, key="len_cmp2")
-            mu2 = st.sidebar.number_input("μ (série 2)", value=0.0, key="mu_cmp2")
-            sigma2 = st.sidebar.number_input("σ (série 2)", value=1.0, key="sigma_cmp2")
-            data2_candidate = np.random.normal(mu2, sigma2, size=length2)
-
-        elif src2 == "Sinusovka":
-            length2 = st.sidebar.slider("Délka série 2", 10, 1000, 200, key="len_sin2")
-            amp2 = st.sidebar.number_input("Amplituda 2", value=1.0, key="amp_sin2")
-            freq2 = st.sidebar.number_input("Frekvence 2", value=1.0, key="frq_sin2")
-            x2 = np.arange(length2)
-            data2_candidate = amp2 * np.sin(2 * np.pi * freq2 * x2 / length2)
-
-        else:  # Chaotický generátor – série 2
-            chaos2 = st.sidebar.selectbox(
-                "Typ chaotického generátoru (série 2)",
-                [
-                    "Logistická mapa",
-                    "Henonova mapa",
-                    "Lorenzův systém (x-složka)",
-                    "1/f šum (pink noise)",
-                ],
-                key="chaos_type_2",
-            )
-
-            if chaos2 == "Logistická mapa":
-                length2 = st.sidebar.slider(
-                    "Délka série 2", 100, 5000, 1000, step=100, key="len_log_2"
-                )
-                r2 = st.sidebar.slider(
-                    "Parametr r (série 2)", 3.5, 4.0, 3.9, step=0.01, key="r_log_2"
-                )
-                x02 = st.sidebar.number_input(
-                    "Počáteční x₀ (série 2)",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=0.2,
-                    step=0.01,
-                    key="x0_log_2",
-                )
-                burn2 = st.sidebar.number_input(
-                    "Burn-in iterace (série 2)",
-                    100,
-                    10000,
-                    500,
-                    step=100,
-                    key="burn_log_2",
-                )
-                data2_candidate = generate_logistic_map(
-                    length2, r=r2, x0=x02, burn=burn2
-                )
-
-            elif chaos2 == "Henonova mapa":
-                length2 = st.sidebar.slider(
-                    "Délka série 2", 100, 5000, 1000, step=100, key="len_hen_2"
-                )
-                a2 = st.sidebar.number_input(
-                    "Parametr a (série 2)", value=1.4, step=0.1, key="a_hen_2"
-                )
-                b2 = st.sidebar.number_input(
-                    "Parametr b (série 2)", value=0.3, step=0.05, key="b_hen_2"
-                )
-                x02 = st.sidebar.number_input(
-                    "Počáteční x₀ (série 2)", value=0.1, step=0.05, key="x0_hen_2"
-                )
-                y02 = st.sidebar.number_input(
-                    "Počáteční y₀ (série 2)", value=0.0, step=0.05, key="y0_hen_2"
-                )
-                burn2 = st.sidebar.number_input(
-                    "Burn-in iterace (série 2)",
-                    100,
-                    10000,
-                    500,
-                    step=100,
-                    key="burn_hen_2",
-                )
-                data2_candidate = generate_henon_map(
-                    length2, a=a2, b=b2, x0=x02, y0=y02, burn=burn2
-                )
-
-            elif chaos2 == "Lorenzův systém (x-složka)":
-                length2 = st.sidebar.slider(
-                    "Délka série 2", 200, 10000, 2000, step=200, key="len_lor_2"
-                )
-                dt2 = st.sidebar.number_input(
-                    "Krok integrace dt (série 2)",
-                    value=0.01,
-                    step=0.005,
-                    format="%.3f",
-                    key="dt_lor_2",
-                )
-                sigma_l2 = st.sidebar.number_input(
-                    "σ (série 2)", value=10.0, step=1.0, key="sigma_lor_2"
-                )
-                rho_l2 = st.sidebar.number_input(
-                    "ρ (série 2)", value=28.0, step=1.0, key="rho_lor_2"
-                )
-                beta_l2 = st.sidebar.number_input(
-                    "β (série 2)", value=8 / 3, step=0.1, key="beta_lor_2"
-                )
-                burn2 = st.sidebar.number_input(
-                    "Burn-in kroků (série 2)",
-                    500,
-                    20000,
-                    1000,
-                    step=500,
-                    key="burn_lor_2",
-                )
-                data2_candidate = generate_lorenz_x(
-                    length2,
-                    dt=dt2,
-                    sigma=sigma_l2,
-                    rho=rho_l2,
-                    beta=beta_l2,
-                    burn=burn2,
-                )
-
-            else:  # 1/f šum
-                length2 = st.sidebar.slider(
-                    "Délka série 2", 100, 10000, 2000, step=100, key="len_pink_2"
-                )
-                data2_candidate = generate_pink_noise(length2)
-
-        generate2 = st.sidebar.button("Načíst / generovat sérii 2")
-
-        if generate2:
             if data2_candidate is None:
-                st.sidebar.error(
-                    "Série 2 zatím není připravená – zkontroluj nastavení / CSV."
-                )
+                st.sidebar.error("Série 2 zatím není připravená – zkontroluj nastavení.")
             else:
                 st.session_state.data2 = data2_candidate.copy()
                 st.session_state.meta2 = meta2
                 st.session_state.show_cmp_horiz1 = False
                 st.session_state.show_cmp_horiz2 = False
 
-                if src2 == "Nahrát CSV":
+                if mode2 == "Nahrát CSV":
                     st.session_state.series_name2 = selected_column2
                     st.session_state.series_normalized2 = normalize_csv2
                     st.session_state.series_aggregation2 = aggregation_freq_cmp
                 else:
-                    st.session_state.series_name2 = src2
+                    st.session_state.series_name2 = typ2 if typ2 is not None else chaos_typ2
                     st.session_state.series_normalized2 = False
                     st.session_state.series_aggregation2 = None
-                
+
                 st.sidebar.success(f"Načteno {len(data2_candidate)} hodnot pro sérii 2.")
 
-                if src2 == "Nahrát CSV":
+                if mode2 == "Nahrát CSV":
                     if meta2 is not None and meta2["datetime_used"]:
                         if meta2["selection_mode"] == "date":
                             st.sidebar.caption(f"Datový rozsah série 2: {csv2_start_date} → {csv2_end_date}")
