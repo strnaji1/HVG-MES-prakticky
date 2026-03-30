@@ -681,7 +681,7 @@ st.sidebar.title("🔧 Vstup / režim")
 
 analysis_mode = st.sidebar.radio(
     "Co chceš analyzovat?",
-    ["Časová řada → HVG", "Vlastní graf (ruční / CSV)", "Porovnat dvě časové řady"],
+    ["Časová řada → HVG", "Porovnat dvě časové řady", "Vlastní HVG graf (ruční / CSV)"],
 )
 
 # =====================================================================
@@ -2469,12 +2469,12 @@ if analysis_mode == "Časová řada → HVG":
 #  REŽIM 2: VLASTNÍ GRAF Z NODE/EDGE LISTU NEBO CSV
 # =====================================================================
 
-elif analysis_mode == "Vlastní graf (ruční / CSV)":
-    st.sidebar.subheader("Vlastní graf – vstup")
+elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
+    st.sidebar.subheader("Vlastní HVG graf – vstup")
 
     input_mode = st.sidebar.radio(
         "Způsob zadání grafu",
-        ["Node list", "Edge list", "Node + Edge list", "CSV (edge list)"],
+        ["Node list", "Edge list", "Node + Edge list", "Edge list (CSV)", "Node + edge list (CSV)"],
     )
 
     custom_graph = None
@@ -2538,7 +2538,7 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
                     Gc.add_edge(u, v)
             custom_graph = Gc
 
-    else:  # "CSV (edge list)"
+    elif input_mode == "Edge list (CSV)":  # "CSV (edge list)"
         st.sidebar.write(
             "Očekává se CSV se **dvěma sloupci**: zdroj a cíl hrany (edge list)."
         )
@@ -2566,12 +2566,77 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
                         Gc.add_edge(u, v)
                     custom_graph = Gc
 
+    elif input_mode == "Node + edge list (CSV)":
+        st.sidebar.markdown("### 📂 Načtení grafu z CSV")
+
+        nodes_file = st.sidebar.file_uploader(
+            "CSV – seznam vrcholů (nodes)", type="csv", key="nodes_csv"
+        )
+        edges_file = st.sidebar.file_uploader(
+            "CSV – seznam hran (edges)", type="csv", key="edges_csv"
+        )
+
+        if nodes_file is not None and edges_file is not None:
+
+            try:
+                nodes_df = pd.read_csv(nodes_file)
+                edges_df = pd.read_csv(edges_file)
+
+                st.sidebar.caption("Náhled nodes:")
+                st.sidebar.dataframe(nodes_df.head(), use_container_width=True)
+
+                st.sidebar.caption("Náhled edges:")
+                st.sidebar.dataframe(edges_df.head(), use_container_width=True)
+
+                G_custom = nx.Graph()
+
+                if nodes_df.shape[1] == 1:
+                    node_col = nodes_df.columns[0]
+                else:
+                    node_col = st.sidebar.selectbox(
+                        "Sloupec s ID vrcholu",
+                        nodes_df.columns.tolist(),
+                        key="nodes_col_select",
+                    )
+
+                for n in nodes_df[node_col]:
+                    G_custom.add_node(str(n))
+
+                if edges_df.shape[1] >= 2:
+                    col1, col2 = st.sidebar.columns(2)
+
+                    with col1:
+                        source_col = st.selectbox(
+                            "Zdroj (source)",
+                            edges_df.columns.tolist(),
+                            key="edge_source_col",
+                        )
+
+                    with col2:
+                        target_col = st.selectbox(
+                            "Cíl (target)",
+                            edges_df.columns.tolist(),
+                            key="edge_target_col",
+                        )
+
+                    for _, row in edges_df.iterrows():
+                        G_custom.add_edge(str(row[source_col]), str(row[target_col]))
+
+                st.session_state.custom_graph = G_custom
+
+                st.sidebar.success(
+                    f"Načten graf: {G_custom.number_of_nodes()} vrcholů, {G_custom.number_of_edges()} hran"
+                )
+
+            except Exception as e:
+                st.sidebar.error(f"Chyba při načítání CSV: {e}")
+        
     # Uložíme, pokud jsme něco vytvořili
     if custom_graph is not None:
         st.session_state.custom_graph = custom_graph
 
     # Hlavní obsah pro vlastní graf
-    st.markdown("## Vlastní graf (analýza)")
+    st.markdown("## Vlastní HVG graf (analýza)")
 
     if st.session_state.custom_graph is not None:
         Gc = st.session_state.custom_graph
@@ -2645,7 +2710,7 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
                 st.write("- Diametr grafu: *není k dispozici*")
 
         with col_c2:
-            st.markdown("**Clustering a small-world charakter (vlastní graf)**")
+            st.markdown("**Clustering a small-world charakter (vlastní HVG graf)**")
             st.write(f"- Clustering coefficient C: **{C_c:.3f}**")
             if L_rand_c is not None and C_rand_c is not None and C_rand_c != 0:
                 st.write(
@@ -2716,7 +2781,7 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
 
             fig_custom = go.Figure(data=[edge_trace_c, node_trace_c])
             fig_custom.update_layout(
-                title="Vlastní graf (node/edge list nebo CSV)",
+                title="Vlastní HVG graf (node/edge list nebo CSV)",
                 showlegend=False,
                 hovermode="closest",
                 margin=dict(b=20, l=5, r=5, t=40),
@@ -2727,7 +2792,7 @@ elif analysis_mode == "Vlastní graf (ruční / CSV)":
                 "Graf neobsahuje žádné vrcholy – zadej alespoň jeden vrchol nebo hranu."
             )
     else:
-        st.info("Nejprve zadej vlastní graf v levém panelu (node/edge list nebo CSV).")
+        st.info("Nejprve zadej vlastní HVG graf v levém panelu (node/edge list nebo CSV).")
 
 # =====================================================================
 #  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
