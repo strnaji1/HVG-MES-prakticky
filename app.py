@@ -595,6 +595,7 @@ def classify_series_from_hvg(
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     best_label, best_score = sorted_scores[0]
     second_label, second_score = sorted_scores[1]
+    third_label, third_score = sorted_scores[2]
 
     gap = best_score - second_score
     total_score = sum(scores.values())
@@ -668,13 +669,25 @@ def classify_series_from_hvg(
         dominance_ratio = best_score / total_score
     else:
         dominance_ratio = 0.0
-
+    
+    ranking_text = (
+        f"Nejsilněji podporovaná interpretace je „{best_label}“ "
+        f"se skóre {best_score:.1f}. "
+        f"Druhá v pořadí je „{second_label}“ se skóre {second_score:.1f}. "
+        f"Nejslabší podporu má „{third_label}“ se skóre {third_score:.1f}."
+    )
     if dominance_ratio >= 0.60:
         dominance_text = "Dominantní interpretace je poměrně výrazná."
     elif dominance_ratio >= 0.45:
         dominance_text = "Dominantní interpretace je středně výrazná."
     else:
         dominance_text = "Dominantní interpretace není příliš výrazná."
+    if gap >= 3:
+        gap_text = "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je výrazný."
+    elif gap >= 1.5:
+        gap_text = "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je střední."
+    else:
+        gap_text = "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je malý."    
 
     if label == "Smíšená / neurčitá":
         stability_text = "Výsledek je nejednoznačný a jednotlivé interpretace jsou si relativně blízké."
@@ -696,7 +709,7 @@ def classify_series_from_hvg(
             f"**{alternative_label}**."
         )
     return {
-            "label": label,
+        "label": label,
         "confidence": confidence,
         "reason_text": " ".join(reason_parts + evidence_parts),
         "structure_text": " ".join(structure_parts),
@@ -704,16 +717,35 @@ def classify_series_from_hvg(
         "scores": scores,
         "normalized_scores": normalized_scores,
         "dominance_ratio": dominance_ratio,
-        "mixed_text": mixed_text,
-        "dominance_text": dominance_text,
+         "dominance_text": dominance_text,
+         "mixed_text": mixed_text,
         "stability_text": stability_text,
         "alternative_label": alternative_label,
         "score_gap_text": alternative_gap_text,
+        "gap_text": gap_text,
+        "ranking_text": ranking_text,
         "best_score": best_score,
         "second_score": second_score,
         "total_score": total_score,
     }
 
+def get_classification_status_text(classification):
+    label = classification["label"]
+    confidence = classification["confidence"]
+    dominance_ratio = classification.get("dominance_ratio", 0.0)
+
+    if label == "Smíšená / neurčitá":
+        if dominance_ratio >= 0.45:
+            return "Výsledek je smíšený, ale jedna interpretace mírně převažuje."
+        return "Výsledek je nejednoznačný a interpretace zůstává otevřená."
+
+    if confidence == "vyšší":
+        return "Výsledek působí poměrně přesvědčivě a dominantní interpretace je výrazná."
+    elif confidence == "střední":
+        return "Výsledek je použitelný, ale stále je vhodné zachovat interpretační opatrnost."
+    else:
+        return "Výsledek naznačuje určitý směr, ale důkaz není příliš silný."
+        
 # =========================
 #  Inicializace session state
 # =========================
@@ -2418,15 +2450,31 @@ if analysis_mode == "Časová řada → HVG":
             )
 
             st.markdown("**Orientační strukturální klasifikace časové řady**")
-            st.warning(
+
+            classification_text = (
                 f"Nejpravděpodobnější charakter řady: **{classification['label']}** "
                 f"(jistota: **{classification['confidence']}**)"
             )
 
+            if classification["confidence"] == "vyšší":
+                st.success(classification_text)
+            elif classification["confidence"] == "střední":
+                st.warning(classification_text)
+            else:
+                st.info(classification_text)
+            st.caption(get_classification_status_text(classification))
+            
             st.markdown("**Zdůvodnění klasifikace**")
             st.write(classification["reason_text"])
             st.caption(f"Alternativní interpretace: {classification['alternative_label']}. {classification['score_gap_text']}")
-
+            st.caption(
+                f"Síla dominance hlavní interpretace: {classification['dominance_text']} "
+                f"(podíl dominantního skóre: {classification['dominance_ratio']:.2f})."
+            )
+            st.caption(
+                f"Síla dominance hlavní interpretace: {classification['dominance_ratio']:.2f}. "
+                f"{classification['dominance_text']}"
+            )
             st.markdown("**Charakter sítě**")
             st.write(classification["structure_text"])
             
@@ -2453,7 +2501,49 @@ if analysis_mode == "Časová řada → HVG":
                     f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
                     delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
                 )
+            st.caption(
+                "První číslo představuje bodové skóre dané interpretace. Procento ukazuje její relativní podíl na celkovém skóre všech tří možností."
+            )
+            st.caption(
+                "Relativní podíl skóre: "
+                f"pravidelná {classification['normalized_scores']['Spíše pravidelná / periodická']} %, "
+                f"komplexní {classification['normalized_scores']['Spíše komplexní deterministická / chaotická']} %, "
+                f"stochastická {classification['normalized_scores']['Spíše stochastická / náhodná']} %."
+            )
+            st.caption(
+                "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
+                "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre. "
+                "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
+            )
+            st.markdown("**Síla dominantní interpretace**")
+            st.markdown("**Rozdíl mezi hlavní a alternativní interpretací**")
+            st.markdown("**Pořadí interpretací podle podpory metrik**")
+            st.info(classification["ranking_text"])
+            if classification["best_score"] - classification["second_score"] >= 3:
+                st.success(classification["gap_text"])
+            elif classification["best_score"] - classification["second_score"] >= 1.5:
+                st.info(classification["gap_text"])
+            else:
+                st.warning(classification["gap_text"])
+            if classification["dominance_ratio"] >= 0.60:
+                st.success(classification["dominance_text"])
+            elif classification["dominance_ratio"] >= 0.45:
+                st.info(classification["dominance_text"])
+            else:
+                st.warning(classification["dominance_text"])    
+            st.markdown("**Relativní síla interpretací**")
 
+            st.write("Pravidelná / periodická")
+            st.progress(classification["normalized_scores"]["Spíše pravidelná / periodická"] / 100)
+            st.caption(f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %")
+
+            st.write("Komplexní / chaotická")
+            st.progress(classification["normalized_scores"]["Spíše komplexní deterministická / chaotická"] / 100)
+            st.caption(f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %")
+
+            st.write("Stochastická / náhodná")
+            st.progress(classification["normalized_scores"]["Spíše stochastická / náhodná"] / 100)
+            st.caption(f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %")
             st.caption(
                 "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
             )
@@ -2462,6 +2552,13 @@ if analysis_mode == "Časová řada → HVG":
                 f"Míra dominance hlavní interpretace: {classification['dominance_ratio']:.2f}. "
                 f"{classification['dominance_text']}"
             )
+            st.markdown("**Síla dominantní interpretace**")
+            st.write(
+                f"Podíl dominantní interpretace na celkovém skóre je "
+                f"**{classification['dominance_ratio'] * 100:.1f} %**."
+            )
+            st.caption(classification["dominance_text"])
+            
             st.caption(classification["warning_text"])
             
             st.markdown("**Grafické zobrazení skóre klasifikace**")
@@ -5838,13 +5935,28 @@ else:  # "Porovnat dvě časové řady"
                         st.write(interp1)
 
                         st.markdown("**Orientační klasifikace**")
-                        st.success(
+                        classification_text_1 = (
                             f"**{classification1['label']}** "
                             f"(jistota: **{classification1['confidence']}**)"
                         )
+
+                        if classification1["confidence"] == "vyšší":
+                            st.success(classification_text_1)
+                        elif classification1["confidence"] == "střední":
+                            st.warning(classification_text_1)
+                        else:
+                            st.info(classification_text_1)
+                        st.caption(get_classification_status_text(classification1))
                         st.write(classification1["reason_text"])
                         st.caption(f"Alternativní interpretace: {classification1['alternative_label']}. {classification1['score_gap_text']}")
-
+                        st.caption(
+                            f"Síla dominance hlavní interpretace: {classification1['dominance_text']} "
+                            f"(podíl dominantního skóre: {classification1['dominance_ratio']:.2f})."
+                        )
+                        st.caption(
+                            f"Síla dominance hlavní interpretace: {classification['dominance_ratio']:.2f}. "
+                            f"{classification['dominance_text']}"
+                        )
                         st.markdown("**Charakter sítě**")
                         st.caption(classification1["structure_text"])
 
@@ -5867,23 +5979,64 @@ else:  # "Porovnat dvě časové řady"
                         with score1_col1:
                             st.metric(
                                 "Pravidelná / periodická",
-                                f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
-                                delta=delta_reg_1
+                                f"{classification1['scores']['Spíše pravidelná / periodická']:.1f}",
+                                delta=f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
                             )
-
                         with score1_col2:
                             st.metric(
                                 "Komplexní / chaotická",
-                                f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
-                                delta=delta_chaos_1
+                                f"{classification1['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
+                                delta=f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
                             )
-
                         with score1_col3:
                             st.metric(
                                 "Stochastická / náhodná",
-                                f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
-                                delta=delta_stoch_1
+                                f"{classification1['scores']['Spíše stochastická / náhodná']:.1f}",
+                                delta=f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
                             )
+                        st.caption(
+                            "První číslo představuje bodové skóre dané interpretace. Procento ukazuje její relativní podíl na celkovém skóre všech tří možností."
+                        )    
+                        st.caption(
+                            "Relativní podíl skóre: "
+                            f"pravidelná {classification1['normalized_scores']['Spíše pravidelná / periodická']} %, "
+                            f"komplexní {classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']} %, "
+                            f"stochastická {classification1['normalized_scores']['Spíše stochastická / náhodná']} %."
+                        )
+                        st.caption(
+                            "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
+                            "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre. "
+                            "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
+                        )
+                        st.markdown("**Síla dominantní interpretace**")
+                        st.markdown("**Rozdíl mezi hlavní a alternativní interpretací**")
+                        st.markdown("**Pořadí interpretací podle podpory metrik**")
+                        st.info(classification1["ranking_text"])
+                        if classification1["best_score"] - classification1["second_score"] >= 3:
+                            st.success(classification1["gap_text"])
+                        elif classification1["best_score"] - classification1["second_score"] >= 1.5:
+                            st.info(classification1["gap_text"])
+                        else:
+                            st.warning(classification1["gap_text"])
+                        if classification1["dominance_ratio"] >= 0.60:
+                            st.success(classification1["dominance_text"])
+                        elif classification1["dominance_ratio"] >= 0.45:
+                            st.info(classification1["dominance_text"])
+                        else:
+                            st.warning(classification1["dominance_text"])    
+                        st.markdown("**Relativní síla interpretací**")
+
+                        st.write("Pravidelná / periodická")
+                        st.progress(classification1["normalized_scores"]["Spíše pravidelná / periodická"] / 100)
+                        st.caption(f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %")
+
+                        st.write("Komplexní / chaotická")
+                        st.progress(classification1["normalized_scores"]["Spíše komplexní deterministická / chaotická"] / 100)
+                        st.caption(f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %")
+
+                        st.write("Stochastická / náhodná")
+                        st.progress(classification1["normalized_scores"]["Spíše stochastická / náhodná"] / 100)
+                        st.caption(f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %")
 
                         st.caption(
                             "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
@@ -5932,6 +6085,13 @@ else:  # "Porovnat dvě časové řady"
                             f"Dominance hlavní interpretace: {classification1['dominance_ratio'] * 100:.1f} %. "
                             f"{classification1['dominance_text']}"
                         )
+                        st.markdown("**Síla dominantní interpretace**")
+                        st.write(
+                            f"Podíl dominantní interpretace na celkovém skóre je "
+                            f"**{classification1['dominance_ratio'] * 100:.1f} %**."
+                        )
+                        st.caption(classification1["dominance_text"])
+                        
                         st.caption(classification1["warning_text"])
                         
                     with col_s2:
@@ -5943,13 +6103,28 @@ else:  # "Porovnat dvě časové řady"
                         st.write(interp2)
 
                         st.markdown("**Orientační klasifikace**")
-                        st.success(
-                            f"**{classification2['label']}** "
-                            f"(jistota: **{classification2['confidence']}**)"
+                        classification_text_1 = (
+                            f"**{classification1['label']}** "
+                            f"(jistota: **{classification1['confidence']}**)"
                         )
+
+                        if classification1["confidence"] == "vyšší":
+                            st.success(classification_text_1)
+                        elif classification1["confidence"] == "střední":
+                            st.warning(classification_text_1)
+                        else:
+                            st.info(classification_text_1)
+                        st.caption(get_classification_status_text(classification2))
                         st.write(classification2["reason_text"])
                         st.caption(f"Alternativní interpretace: {classification2['alternative_label']}. {classification2['score_gap_text']}")
-
+                        st.caption(
+                            f"Síla dominance hlavní interpretace: {classification2['dominance_text']} "
+                            f"(podíl dominantního skóre: {classification2['dominance_ratio']:.2f})."
+                        )
+                        st.caption(
+                            f"Síla dominance hlavní interpretace: {classification2['dominance_ratio']:.2f}. "
+                            f"{classification2['dominance_text']}"
+                        )
                         st.markdown("**Charakter sítě**")
                         st.caption(classification2["structure_text"])
 
@@ -5972,24 +6147,65 @@ else:  # "Porovnat dvě časové řady"
                         with score2_col1:
                             st.metric(
                                 "Pravidelná / periodická",
-                                f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
-                                delta=delta_reg_2
+                                f"{classification2['scores']['Spíše pravidelná / periodická']:.1f}",
+                                delta=f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
                             )
-
                         with score2_col2:
                             st.metric(
                                 "Komplexní / chaotická",
-                                f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
-                                delta=delta_chaos_2
+                                f"{classification2['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
+                                delta=f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
                             )
-
                         with score2_col3:
                             st.metric(
                                 "Stochastická / náhodná",
-                                f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
-                                delta=delta_stoch_2
+                                f"{classification2['scores']['Spíše stochastická / náhodná']:.1f}",
+                                delta=f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
                             )
+                        st.caption(
+                            "První číslo představuje bodové skóre dané interpretace. Procento ukazuje její relativní podíl na celkovém skóre všech tří možností."
+                        )    
+                        st.caption(
+                            "Relativní podíl skóre: "
+                            f"pravidelná {classification2['normalized_scores']['Spíše pravidelná / periodická']} %, "
+                            f"komplexní {classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']} %, "
+                            f"stochastická {classification2['normalized_scores']['Spíše stochastická / náhodná']} %."
+                        )
+                        st.caption(
+                            "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
+                            "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre. "
+                            "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
+                        )
+                        st.markdown("**Síla dominantní interpretace**")
+                        st.markdown("**Rozdíl mezi hlavní a alternativní interpretací**")
+                        st.markdown("**Pořadí interpretací podle podpory metrik**")
+                        st.info(classification2["ranking_text"])
+                        if classification2["best_score"] - classification2["second_score"] >= 3:
+                            st.success(classification2["gap_text"])
+                        elif classification2["best_score"] - classification2["second_score"] >= 1.5:
+                            st.info(classification2["gap_text"])
+                        else:
+                            st.warning(classification2["gap_text"])
+                        if classification2["dominance_ratio"] >= 0.60:
+                            st.success(classification2["dominance_text"])
+                        elif classification2["dominance_ratio"] >= 0.45:
+                            st.info(classification2["dominance_text"])
+                        else:
+                            st.warning(classification2["dominance_text"])
 
+                        st.markdown("**Relativní síla interpretací**")
+
+                        st.write("Pravidelná / periodická")
+                        st.progress(classification1["normalized_scores"]["Spíše pravidelná / periodická"] / 100)
+                        st.caption(f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %")
+
+                        st.write("Komplexní / chaotická")
+                        st.progress(classification1["normalized_scores"]["Spíše komplexní deterministická / chaotická"] / 100)
+                        st.caption(f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %")
+
+                        st.write("Stochastická / náhodná")
+                        st.progress(classification1["normalized_scores"]["Spíše stochastická / náhodná"] / 100)
+                        st.caption(f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %")
                         st.caption(
                             "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
                         )
@@ -6036,7 +6252,14 @@ else:  # "Porovnat dvě časové řady"
                             f"Dominance hlavní interpretace: {classification2['dominance_ratio'] * 100:.1f} %. "
                             f"{classification2['dominance_text']}"
                         )
-                        st.caption(classification2["warning_text"])                    
+                        st.markdown("**Síla dominantní interpretace**")
+                        st.write(
+                            f"Podíl dominantní interpretace na celkovém skóre je "
+                            f"**{classification2['dominance_ratio'] * 100:.1f} %**."
+                        )
+                        st.caption(classification2["dominance_text"])
+                        st.caption(classification2["warning_text"])  
+                                          
                     st.markdown("---")
                     st.markdown("## Porovnání sérií") 
                     
