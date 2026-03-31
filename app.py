@@ -413,14 +413,15 @@ def classify_series_from_hvg(
     L_rand=None,
     sigma_conf=None,
 ):
-    label = "Smíšená / neurčitá"
-    confidence_score = 0
+    scores = {
+        "Spíše pravidelná / periodická": 0.0,
+        "Spíše komplexní deterministická / chaotická": 0.0,
+        "Spíše stochastická / náhodná": 0.0,
+    }
 
     reason_parts = []
     structure_parts = []
-    evidence_for_regular = 0
-    evidence_for_chaotic = 0
-    evidence_for_stochastic = 0
+    evidence_parts = []
 
     warning_text = (
         "Tato klasifikace je orientační a vychází ze síťové reprezentace časové řady pomocí HVG. "
@@ -428,198 +429,289 @@ def classify_series_from_hvg(
     )
 
     # =========================
-    # Popis charakteru sítě
+    # 1) Lokální propojenost C
     # =========================
     if C is not None and not np.isnan(C):
-        if C < 0.20:
+        if C < 0.18:
             structure_parts.append(
-                "Síť má nízkou lokální propojenost, takže působí méně organizovaně."
+                "Síť má nízkou lokální propojenost."
             )
-            evidence_for_stochastic += 2
-        elif C < 0.35:
+            scores["Spíše stochastická / náhodná"] += 2.5
+        elif C < 0.32:
             structure_parts.append(
-                "Síť má střední lokální propojenost, což ukazuje na přítomnost určité struktury."
+                "Síť má střední lokální propojenost."
             )
-            evidence_for_chaotic += 1
+            scores["Spíše komplexní deterministická / chaotická"] += 1.5
+            scores["Spíše stochastická / náhodná"] += 0.5
         else:
             structure_parts.append(
-                "Síť má vyšší lokální propojenost, což ukazuje na výraznější vnitřní organizaci."
+                "Síť má vyšší lokální propojenost."
             )
-            evidence_for_regular += 2
-            evidence_for_chaotic += 1
+            scores["Spíše pravidelná / periodická"] += 2.0
+            scores["Spíše komplexní deterministická / chaotická"] += 1.0
 
+    # =========================
+    # 2) Small-world index
+    # =========================
     if sigma_sw is not None and not np.isnan(sigma_sw):
-        if sigma_sw < 1.0:
+        if sigma_sw < 0.95:
             structure_parts.append(
                 "Síť nevykazuje výrazný small-world charakter."
             )
-            evidence_for_stochastic += 1
-        elif sigma_sw < 1.2:
+            scores["Spíše stochastická / náhodná"] += 1.5
+        elif sigma_sw < 1.15:
             structure_parts.append(
-                "Síť je jen mírně odlišná od náhodného grafu."
+                "Síť je small-world charakterem blízká náhodnému grafu."
             )
-            evidence_for_stochastic += 1
-            evidence_for_chaotic += 1
+            scores["Spíše komplexní deterministická / chaotická"] += 1.0
+            scores["Spíše stochastická / náhodná"] += 1.0
         else:
             structure_parts.append(
-                "Síť vykazuje výrazný small-world charakter."
+                "Síť vykazuje výraznější small-world charakter."
             )
-            evidence_for_chaotic += 2
-            evidence_for_regular += 1
+            scores["Spíše komplexní deterministická / chaotická"] += 2.0
+            scores["Spíše pravidelná / periodická"] += 1.0
 
+    # =========================
+    # 3) Variabilita stupňového rozdělení
+    # =========================
     if entropy_deg_norm is not None and not np.isnan(entropy_deg_norm):
-        if entropy_deg_norm < 0.35:
+        if entropy_deg_norm < 0.30:
             structure_parts.append(
                 "Variabilita stupňového rozdělení je nízká."
             )
-            evidence_for_regular += 2
-        elif entropy_deg_norm < 0.65:
+            scores["Spíše pravidelná / periodická"] += 2.5
+        elif entropy_deg_norm < 0.55:
             structure_parts.append(
                 "Variabilita stupňového rozdělení je střední."
             )
-            evidence_for_chaotic += 2
+            scores["Spíše komplexní deterministická / chaotická"] += 2.0
         else:
             structure_parts.append(
-                "Variabilita stupňového rozdělení je vysoká."
+                "Variabilita stupňového rozdělení je vyšší."
             )
-            evidence_for_stochastic += 2
-            evidence_for_chaotic += 1
+            scores["Spíše stochastická / náhodná"] += 2.0
+            scores["Spíše komplexní deterministická / chaotická"] += 0.5
 
+    # =========================
+    # 4) Assortativita
+    # =========================
     if assort is not None and not np.isnan(assort):
         if assort > 0.10:
             structure_parts.append(
-                "Kladná assortativita naznačuje tendenci propojení vrcholů podobného stupně."
+                "Kladná assortativita ukazuje tendenci propojování vrcholů podobného stupně."
             )
-            evidence_for_regular += 1
-            evidence_for_chaotic += 1
+            scores["Spíše pravidelná / periodická"] += 1.0
+            scores["Spíše komplexní deterministická / chaotická"] += 0.5
         elif assort < -0.10:
             structure_parts.append(
-                "Záporná assortativita naznačuje propojení vrcholů odlišného stupně."
+                "Záporná assortativita ukazuje častější propojení vrcholů odlišného stupně."
             )
-            evidence_for_stochastic += 1
-
-    if avg_deg is not None and not np.isnan(avg_deg):
-        structure_parts.append(
-            f"Průměrný stupeň sítě je {avg_deg:.3f}."
-        )
-
-    if L is not None and not np.isnan(L):
-        reason_parts.append(
-            f"Průměrná délka cesty L = {L:.3f} ukazuje, jak rychle jsou v síti propojené vzdálenější části."
-        )
-
-    if C_rand is not None and L_rand is not None:
-        reason_parts.append(
-            "Při interpretaci je zohledněno také srovnání s odpovídajícím náhodným grafem."
-        )
-        if C is not None and C_rand is not None and not np.isnan(C) and C_rand not in (None, 0):
-            if C > 2 * C_rand:
-                reason_parts.append(
-                    "Clustering původního HVG je výrazně vyšší než u odpovídajícího náhodného grafu."
-                )
-                evidence_for_regular += 1
-                evidence_for_chaotic += 1
-        if sigma_conf is not None and not np.isnan(sigma_conf):
-            if sigma_sw is not None and not np.isnan(sigma_sw):
-                if sigma_sw > sigma_conf:
-                    reason_parts.append(
-                        "Skutečný HVG je small-world strukturou výraznější než jeho konfigurační null model."
-                    )
-                    evidence_for_chaotic += 1
-                    evidence_for_regular += 1
-                elif sigma_sw < sigma_conf:
-                    reason_parts.append(
-                        "Konfigurační null model vykazuje srovnatelný nebo výraznější small-world charakter než původní HVG."
-                    )
-                    evidence_for_stochastic += 1
+            scores["Spíše stochastická / náhodná"] += 1.0
 
     # =========================
-    # Power-law doplnění
+    # 5) Průměrný stupeň
+    # =========================
+    if avg_deg is not None and not np.isnan(avg_deg):
+        evidence_parts.append(f"Průměrný stupeň sítě je {avg_deg:.3f}.")
+
+        if avg_deg < 2.4:
+            scores["Spíše stochastická / náhodná"] += 0.5
+        elif avg_deg > 3.2:
+            scores["Spíše pravidelná / periodická"] += 0.5
+            scores["Spíše komplexní deterministická / chaotická"] += 0.5
+
+    # =========================
+    # 6) Průměrná délka cesty
+    # =========================
+    if L is not None and not np.isnan(L):
+        reason_parts.append(
+            f"Průměrná délka cesty L = {L:.3f} popisuje dosažitelnost vzdálenějších částí sítě."
+        )
+
+    # =========================
+    # 7) Srovnání s náhodným grafem
+    # =========================
+    if C_rand is not None and L_rand is not None:
+        reason_parts.append(
+            "Do interpretace je zahrnuto i srovnání s odpovídajícím náhodným grafem."
+        )
+
+        if C is not None and C_rand not in (None, 0) and not np.isnan(C):
+            ratio_c = C / C_rand if C_rand != 0 else None
+
+            if ratio_c is not None:
+                if ratio_c > 2.5:
+                    evidence_parts.append(
+                        "Clustering HVG je výrazně vyšší než u odpovídajícího náhodného grafu."
+                    )
+                    scores["Spíše pravidelná / periodická"] += 1.0
+                    scores["Spíše komplexní deterministická / chaotická"] += 1.0
+                elif ratio_c < 1.3:
+                    evidence_parts.append(
+                        "Clustering HVG je jen málo odlišný od náhodného grafu."
+                    )
+                    scores["Spíše stochastická / náhodná"] += 1.0
+
+    # =========================
+    # 8) Srovnání s konfiguračním null modelem
+    # =========================
+    if sigma_conf is not None and not np.isnan(sigma_conf) and sigma_sw is not None and not np.isnan(sigma_sw):
+        if sigma_sw > sigma_conf + 0.15:
+            evidence_parts.append(
+                "Skutečný HVG je strukturálně výraznější než konfigurační null model."
+            )
+            scores["Spíše komplexní deterministická / chaotická"] += 1.0
+            scores["Spíše pravidelná / periodická"] += 1.0
+        elif sigma_sw < sigma_conf - 0.15:
+            evidence_parts.append(
+                "Konfigurační null model vykazuje srovnatelný nebo vyšší small-world charakter než skutečný HVG."
+            )
+            scores["Spíše stochastická / náhodná"] += 1.0
+
+    # =========================
+    # 9) Power-law test
     # =========================
     if powerlaw_p is not None and powerlaw_R is not None:
         if powerlaw_p < 0.1 and powerlaw_R > 0:
-            reason_parts.append(
-                "Tail stupňového rozdělení je kompatibilní s power-law, což ukazuje na heterogennější topologii."
+            evidence_parts.append(
+                "Tail stupňového rozdělení je kompatibilní s power-law."
             )
-            evidence_for_chaotic += 1
+            scores["Spíše komplexní deterministická / chaotická"] += 1.0
         elif powerlaw_p < 0.1 and powerlaw_R < 0:
-            reason_parts.append(
-                "Power-law nebyl preferovaný před exponenciálním rozdělením, takže síť spíše nevykazuje scale-free charakter."
+            evidence_parts.append(
+                "Exponenciální model je vhodnější než power-law."
             )
-            evidence_for_regular += 1
-            evidence_for_stochastic += 1
+            scores["Spíše pravidelná / periodická"] += 0.5
+            scores["Spíše stochastická / náhodná"] += 0.5
         else:
-            reason_parts.append(
-                "Power-law test je neprůkazný, takže tail stupňového rozdělení nelze jednoznačně interpretovat."
+            evidence_parts.append(
+                "Power-law test je neprůkazný."
             )
 
     # =========================
-    # Rozhodnutí
+    # 10) Rozhodnutí
     # =========================
-    scores = {
-        "Spíše pravidelná / periodická": evidence_for_regular,
-        "Spíše komplexní deterministická / chaotická": evidence_for_chaotic,
-        "Spíše stochastická / náhodná": evidence_for_stochastic,
-    }
-
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     best_label, best_score = sorted_scores[0]
-    second_score = sorted_scores[1][1]
+    second_label, second_score = sorted_scores[1]
 
-    if best_score <= 2:
+    gap = best_score - second_score
+    total_score = sum(scores.values())
+    relative_gap = gap / total_score if total_score > 0 else 0.0
+
+    if best_score < 3.0:
         label = "Smíšená / neurčitá"
         confidence = "nízká"
-        reason_parts.append(
-            "Dostupné metriky nevytvářejí dostatečně silný a jednoznačný obraz."
+        reason_parts.insert(
+            0,
+            "Dostupné metriky neposkytují dostatečně silný signál pro jednoznačnou interpretaci."
         )
-    elif best_score - second_score <= 1:
+    elif gap < 1.0:
         label = "Smíšená / neurčitá"
         confidence = "nízká až střední"
-        reason_parts.append(
-            "Jednotlivé metriky ukazují na více možných interpretací a výsledek proto není jednoznačný."
+        reason_parts.insert(
+            0,
+            "Jednotlivé metriky podporují více konkurenčních interpretací a výsledek proto není jednoznačný."
+        )
+    elif relative_gap < 0.12:
+        label = "Smíšená / neurčitá"
+        confidence = "střední"
+        reason_parts.insert(
+            0,
+            "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je vzhledem k celkovému skóre příliš malý."
         )
     else:
         label = best_label
-        confidence_score = best_score - second_score
 
-        if confidence_score >= 3:
+        if gap >= 3.0 and best_score >= 5.0 and relative_gap >= 0.25:
             confidence = "vyšší"
-        elif confidence_score == 2:
+        elif gap >= 2.0 and relative_gap >= 0.18:
             confidence = "střední"
         else:
             confidence = "nižší"
 
+        if label == "Spíše pravidelná / periodická":
+            reason_parts.insert(
+                0,
+                "Klasifikace směřuje k pravidelnému nebo periodickému charakteru, protože síť působí organizovaněji a její stupňové rozdělení je méně variabilní."
+            )
+        elif label == "Spíše komplexní deterministická / chaotická":
+            reason_parts.insert(
+                0,
+                "Klasifikace směřuje ke komplexní deterministické nebo chaotické dynamice, protože síť kombinuje strukturální organizaci s vyšší komplexitou."
+            )
+        elif label == "Spíše stochastická / náhodná":
+            reason_parts.insert(
+                0,
+                "Klasifikace směřuje ke stochastickému nebo náhodnému charakteru, protože síť je méně organizovaná a vykazuje vyšší míru nahodilosti."
+            )
+
     # =========================
-    # Textové zdůvodnění podle labelu
+    # 11) Dominantní a alternativní interpretace
     # =========================
-    if label == "Spíše pravidelná / periodická":
-        reason_parts.insert(
-            0,
-            "Klasifikace směřuje k pravidelnému nebo periodickému charakteru, protože síť vykazuje vyšší organizovanost a nižší variabilitu stupňů."
-        )
-    elif label == "Spíše komplexní deterministická / chaotická":
-        reason_parts.insert(
-            0,
-            "Klasifikace směřuje ke komplexní deterministické nebo chaotické dynamice, protože síť kombinuje strukturální organizaci s vyšší komplexitou."
-        )
-    elif label == "Spíše stochastická / náhodná":
-        reason_parts.insert(
-            0,
-            "Klasifikace směřuje ke stochastickému nebo náhodnému charakteru, protože síť působí méně organizovaně a její stupňové rozdělení je variabilnější."
+    alternative_label = second_label
+    alternative_gap_text = (
+        f"Hlavní interpretace získala skóre {best_score:.1f}, "
+        f"druhá nejsilnější interpretace {second_score:.1f}."
+    )
+    score_sum = sum(scores.values())
+
+    if score_sum > 0:
+        normalized_scores = {
+            k: round((v / score_sum) * 100, 1) for k, v in scores.items()
+        }
+    else:
+        normalized_scores = {k: 0.0 for k in scores}
+        
+    if total_score > 0:
+        dominance_ratio = best_score / total_score
+    else:
+        dominance_ratio = 0.0
+
+    if dominance_ratio >= 0.60:
+        dominance_text = "Dominantní interpretace je poměrně výrazná."
+    elif dominance_ratio >= 0.45:
+        dominance_text = "Dominantní interpretace je středně výrazná."
+    else:
+        dominance_text = "Dominantní interpretace není příliš výrazná."
+
+    if label == "Smíšená / neurčitá":
+        stability_text = "Výsledek je nejednoznačný a jednotlivé interpretace jsou si relativně blízké."
+    elif confidence == "vyšší":
+        stability_text = "Klasifikace působí stabilně a dominantní interpretace je zřetelně oddělená od ostatních."
+    elif confidence == "střední":
+        stability_text = "Klasifikace je použitelná, ale část metrik stále připouští i alternativní interpretaci."
+    else:
+        stability_text = "Klasifikace je spíše hraniční a je vhodné ji chápat opatrně."
+    
+    if label == "Smíšená / neurčitá":
+        mixed_text = (
+            f"Nejsilnější interpretace je **{best_label}**, "
+            f"ale velmi blízko zůstává i **{second_label}**."
         )
     else:
-        reason_parts.insert(
-            0,
-            "Klasifikace zůstává neurčitá, protože metriky neukazují jednotně na jediný typ dynamiky."
+        mixed_text = (
+            f"Vedle dominantní interpretace **{label}** zůstává jako druhá nejsilnější možnost "
+            f"**{alternative_label}**."
         )
-
     return {
-        "label": label,
+            "label": label,
         "confidence": confidence,
-        "reason_text": " ".join(reason_parts),
+        "reason_text": " ".join(reason_parts + evidence_parts),
         "structure_text": " ".join(structure_parts),
         "warning_text": warning_text,
         "scores": scores,
+        "normalized_scores": normalized_scores,
+        "dominance_ratio": dominance_ratio,
+        "mixed_text": mixed_text,
+        "dominance_text": dominance_text,
+        "stability_text": stability_text,
+        "alternative_label": alternative_label,
+        "score_gap_text": alternative_gap_text,
+        "best_score": best_score,
+        "second_score": second_score,
+        "total_score": total_score,
     }
 
 # =========================
@@ -2333,6 +2425,7 @@ if analysis_mode == "Časová řada → HVG":
 
             st.markdown("**Zdůvodnění klasifikace**")
             st.write(classification["reason_text"])
+            st.caption(f"Alternativní interpretace: {classification['alternative_label']}. {classification['score_gap_text']}")
 
             st.markdown("**Charakter sítě**")
             st.write(classification["structure_text"])
@@ -2341,20 +2434,102 @@ if analysis_mode == "Časová řada → HVG":
             score_col1, score_col2, score_col3 = st.columns(3)
 
             with score_col1:
-                st.metric("Pravidelná / periodická", classification["scores"]["Spíše pravidelná / periodická"])
+                st.metric(
+                    "Pravidelná / periodická",
+                    f"{classification['scores']['Spíše pravidelná / periodická']:.1f}",
+                    delta=f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
+                )
 
             with score_col2:
-                st.metric("Komplexní / chaotická", classification["scores"]["Spíše komplexní deterministická / chaotická"])
+                st.metric(
+                    "Komplexní / chaotická",
+                    f"{classification['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
+                    delta=f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
+                )
 
             with score_col3:
-                st.metric("Stochastická / náhodná", classification["scores"]["Spíše stochastická / náhodná"])
-            
+                st.metric(
+                    "Stochastická / náhodná",
+                    f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
+                    delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
+                )
+
             st.caption(
-                "Vyšší skóre znamená, že více síťových metrik podporuje daný typ interpretace. "
-                "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
+                "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
+            )
+
+            st.caption(
+                f"Míra dominance hlavní interpretace: {classification['dominance_ratio']:.2f}. "
+                f"{classification['dominance_text']}"
             )
             st.caption(classification["warning_text"])
             
+            st.markdown("**Grafické zobrazení skóre klasifikace**")
+
+            scores_single_df = pd.DataFrame({
+                "Interpretace": list(classification["scores"].keys()),
+                "Skóre": list(classification["scores"].values()),
+            })
+
+            fig_scores_single = px.bar(
+                scores_single_df,
+                x="Interpretace",
+                y="Skóre",
+                title="Skóre podpory jednotlivých interpretací",
+                text="Skóre",
+            )
+
+            fig_scores_single.update_traces(textposition="outside")
+            fig_scores_single.update_layout(
+                xaxis_title="Typ interpretace",
+                yaxis_title="Skóre podpory",
+            )
+
+            st.plotly_chart(fig_scores_single, use_container_width=True)
+
+            st.caption(
+                "Sloupcový graf ukazuje, jak silně síťové metriky podporují jednotlivé interpretace "
+                "dané časové řady."
+            )
+            
+            st.markdown("**Procentuální rozložení podpory interpretací**")
+            st.caption(
+                "Procenta vyjadřují relativní podíl podpory jednotlivých interpretací na základě použitých HVG metrik."
+            )
+            st.caption(classification["stability_text"])
+            st.caption(classification["mixed_text"])
+            if classification["label"] != "Smíšená / neurčitá":
+                st.info(
+                    f"Převažující interpretace: {classification['label']}. {classification['dominance_text']}"
+                )
+            else:
+                st.warning(
+                    f"Výsledek zůstává smíšený nebo neurčitý. {classification['dominance_text']}"
+                )
+            norm_score_col1, norm_score_col2, norm_score_col3 = st.columns(3)
+
+            with norm_score_col1:
+                st.metric(
+                    "Pravidelná / periodická (%)",
+                    f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
+                )
+
+            with norm_score_col2:
+                st.metric(
+                    "Komplexní / chaotická (%)",
+                    f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
+                )
+
+            with norm_score_col3:
+                st.metric(
+                    "Stochastická / náhodná (%)",
+                    f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
+                )
+
+            st.caption(
+                f"Dominance hlavní interpretace: {classification['dominance_ratio'] * 100:.1f} %. "
+                f"{classification['dominance_text']}"
+            )
         st.markdown("---")    
 
         # =========================
@@ -5668,6 +5843,7 @@ else:  # "Porovnat dvě časové řady"
                             f"(jistota: **{classification1['confidence']}**)"
                         )
                         st.write(classification1["reason_text"])
+                        st.caption(f"Alternativní interpretace: {classification1['alternative_label']}. {classification1['score_gap_text']}")
 
                         st.markdown("**Charakter sítě**")
                         st.caption(classification1["structure_text"])
@@ -5677,14 +5853,87 @@ else:  # "Porovnat dvě časové řady"
                         st.markdown("**Skóre jednotlivých interpretací**")
                         score1_col1, score1_col2, score1_col3 = st.columns(3)
 
-                        with score1_col1:
-                            st.metric("Pravidelná / periodická", classification1["scores"]["Spíše pravidelná / periodická"])
-                        with score1_col2:
-                            st.metric("Komplexní / chaotická", classification1["scores"]["Spíše komplexní deterministická / chaotická"])
-                        with score1_col3:
-                            st.metric("Stochastická / náhodná", classification1["scores"]["Spíše stochastická / náhodná"])
+                        best_label_1 = classification1["label"]
 
+                        if best_label_1 == "Smíšená / neurčitá":
+                            delta_reg_1 = None
+                            delta_chaos_1 = None
+                            delta_stoch_1 = None
+                        else:
+                            delta_reg_1 = "dominantní" if best_label_1 == "Spíše pravidelná / periodická" else None
+                            delta_chaos_1 = "dominantní" if best_label_1 == "Spíše komplexní deterministická / chaotická" else None
+                            delta_stoch_1 = "dominantní" if best_label_1 == "Spíše stochastická / náhodná" else None
+
+                        with score1_col1:
+                            st.metric(
+                                "Pravidelná / periodická",
+                                f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
+                                delta=delta_reg_1
+                            )
+
+                        with score1_col2:
+                            st.metric(
+                                "Komplexní / chaotická",
+                                f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
+                                delta=delta_chaos_1
+                            )
+
+                        with score1_col3:
+                            st.metric(
+                                "Stochastická / náhodná",
+                                f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
+                                delta=delta_stoch_1
+                            )
+
+                        st.caption(
+                            "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
+                        )
+
+                        st.caption(
+                            f"Míra dominance hlavní interpretace: {classification1['dominance_ratio']:.2f}. "
+                            f"{classification1['dominance_text']}"
+                        )
+
+                        st.markdown("**Procentuální rozložení podpory interpretací**")
+                        st.caption(
+                            "Procenta vyjadřují relativní podíl podpory jednotlivých interpretací na základě použitých HVG metrik."
+                        )
+                        st.caption(classification1["stability_text"])
+                        st.caption(classification1["mixed_text"])
+                        if classification1["label"] != "Smíšená / neurčitá":
+                            st.info(
+                                f"Převažující interpretace: {classification1['label']}. {classification1['dominance_text']}"
+                            )
+                        else:
+                            st.warning(
+                                f"Výsledek zůstává smíšený nebo neurčitý. {classification['dominance_text']}"
+                            )
+                        norm1_col1, norm1_col2, norm1_col3 = st.columns(3)
+
+                        with norm1_col1:
+                            st.metric(
+                                "Pravidelná / periodická (%)",
+                                f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
+                            )
+
+                        with norm1_col2:
+                            st.metric(
+                                "Komplexní / chaotická (%)",
+                                f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
+                            )
+
+                        with norm1_col3:
+                            st.metric(
+                                "Stochastická / náhodná (%)",
+                                f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
+                            )
+
+                        st.caption(
+                            f"Dominance hlavní interpretace: {classification1['dominance_ratio'] * 100:.1f} %. "
+                            f"{classification1['dominance_text']}"
+                        )
                         st.caption(classification1["warning_text"])
+                        
                     with col_s2:
                         st.markdown("## Série 2")
                         st.markdown("**Technické shrnutí**")
@@ -5699,6 +5948,7 @@ else:  # "Porovnat dvě časové řady"
                             f"(jistota: **{classification2['confidence']}**)"
                         )
                         st.write(classification2["reason_text"])
+                        st.caption(f"Alternativní interpretace: {classification2['alternative_label']}. {classification2['score_gap_text']}")
 
                         st.markdown("**Charakter sítě**")
                         st.caption(classification2["structure_text"])
@@ -5708,13 +5958,84 @@ else:  # "Porovnat dvě časové řady"
                         st.markdown("**Skóre jednotlivých interpretací**")
                         score2_col1, score2_col2, score2_col3 = st.columns(3)
 
-                        with score2_col1:
-                            st.metric("Pravidelná / periodická", classification2["scores"]["Spíše pravidelná / periodická"])
-                        with score2_col2:
-                            st.metric("Komplexní / chaotická", classification2["scores"]["Spíše komplexní deterministická / chaotická"])
-                        with score2_col3:
-                            st.metric("Stochastická / náhodná", classification2["scores"]["Spíše stochastická / náhodná"])
+                        best_label_2 = classification2["label"]
 
+                        if best_label_2 == "Smíšená / neurčitá":
+                            delta_reg_2 = None
+                            delta_chaos_2 = None
+                            delta_stoch_2 = None
+                        else:
+                            delta_reg_2 = "dominantní" if best_label_2 == "Spíše pravidelná / periodická" else None
+                            delta_chaos_2 = "dominantní" if best_label_2 == "Spíše komplexní deterministická / chaotická" else None
+                            delta_stoch_2 = "dominantní" if best_label_2 == "Spíše stochastická / náhodná" else None
+
+                        with score2_col1:
+                            st.metric(
+                                "Pravidelná / periodická",
+                                f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
+                                delta=delta_reg_2
+                            )
+
+                        with score2_col2:
+                            st.metric(
+                                "Komplexní / chaotická",
+                                f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
+                                delta=delta_chaos_2
+                            )
+
+                        with score2_col3:
+                            st.metric(
+                                "Stochastická / náhodná",
+                                f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
+                                delta=delta_stoch_2
+                            )
+
+                        st.caption(
+                            "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
+                        )
+
+                        st.caption(
+                            f"Míra dominance hlavní interpretace: {classification2['dominance_ratio']:.2f}. "
+                            f"{classification2['dominance_text']}")
+
+                        st.markdown("**Procentuální rozložení podpory interpretací**")
+                        st.caption(
+                            "Procenta vyjadřují relativní podíl podpory jednotlivých interpretací na základě použitých HVG metrik."
+                        )
+                        st.caption(classification2["stability_text"])
+                        st.caption(classification2["mixed_text"])
+                        if classification2["label"] != "Smíšená / neurčitá":
+                            st.info(
+                                f"Převažující interpretace: {classification2['label']}. {classification2['dominance_text']}"
+                            )
+                        else:
+                            st.warning(
+                                f"Výsledek zůstává smíšený nebo neurčitý. {classification2['dominance_text']}"
+                            )
+                        norm2_col1, norm2_col2, norm2_col3 = st.columns(3)
+
+                        with norm2_col1:
+                            st.metric(
+                                "Pravidelná / periodická (%)",
+                                f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
+                            )
+
+                        with norm2_col2:
+                            st.metric(
+                                "Komplexní / chaotická (%)",
+                                f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
+                            )
+
+                        with norm2_col3:
+                            st.metric(
+                                "Stochastická / náhodná (%)",
+                                f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
+                            )
+
+                        st.caption(
+                            f"Dominance hlavní interpretace: {classification2['dominance_ratio'] * 100:.1f} %. "
+                            f"{classification2['dominance_text']}"
+                        )
                         st.caption(classification2["warning_text"])                    
                     st.markdown("---")
                     st.markdown("## Porovnání sérií") 
@@ -5780,7 +6101,20 @@ else:  # "Porovnat dvě časové řady"
                     
                     st.markdown("**Porovnání charakteru časových řad**")
 
-                    if classification1["label"] == classification2["label"]:
+                    same_label = classification1["label"] == classification2["label"]
+                    conf1 = classification1["confidence"]
+                    conf2 = classification2["confidence"]
+
+                    dom1 = classification1["dominance_ratio"]
+                    dom2 = classification2["dominance_ratio"]
+
+                    best_score_1 = classification1["best_score"]
+                    best_score_2 = classification2["best_score"]
+
+                    gap1 = classification1["best_score"] - classification1["second_score"]
+                    gap2 = classification2["best_score"] - classification2["second_score"]
+
+                    if same_label:
                         st.success(
                             f"Obě časové řady vykazují podobný orientační charakter: "
                             f"**{classification1['label']}**."
@@ -5790,26 +6124,274 @@ else:  # "Porovnat dvě časové řady"
                             f"Série 1 je orientačně klasifikována jako **{classification1['label']}**, "
                             f"zatímco Série 2 jako **{classification2['label']}**."
                         )
-                    best_score_1 = max(classification1["scores"].values())
-                    best_score_2 = max(classification2["scores"].values())
 
-                    if best_score_1 > best_score_2:
-                        st.info(
-                            "Série 1 vykazuje silnější podporu pro svou dominantní interpretaci než Série 2."
+                    comparison_character_parts = []
+
+                    if dom1 > dom2 + 0.08:
+                        comparison_character_parts.append(
+                            "Klasifikace Série 1 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
                         )
-                    elif best_score_2 > best_score_1:
-                        st.info(
-                            "Série 2 vykazuje silnější podporu pro svou dominantní interpretaci než Série 1."
+                    elif dom2 > dom1 + 0.08:
+                        comparison_character_parts.append(
+                            "Klasifikace Série 2 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
                         )
                     else:
-                        st.info(
-                            "Obě série mají podobně silnou podporu pro svou dominantní interpretaci."
+                        comparison_character_parts.append(
+                            "Obě série mají podobně výraznou dominantní interpretaci."
                         )
+
+                    if gap1 > gap2 + 1.0:
+                        comparison_character_parts.append(
+                            "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 1, takže její závěr je relativně stabilnější."
+                        )
+                    elif gap2 > gap1 + 1.0:
+                        comparison_character_parts.append(
+                            "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 2, takže její závěr je relativně stabilnější."
+                        )
+                    else:
+                        comparison_character_parts.append(
+                            "Obě série mají podobnou míru vnitřní jednoznačnosti klasifikace."
+                        )
+
+                    if conf1 != conf2:
+                        comparison_character_parts.append(
+                            f"Jistota klasifikace je u Série 1: **{conf1}**, zatímco u Série 2: **{conf2}**."
+                        )
+                    else:
+                        comparison_character_parts.append(
+                            f"Obě série mají stejnou slovní úroveň jistoty klasifikace: **{conf1}**."
+                        )
+
+                    if best_score_1 > best_score_2 + 1.0:
+                        comparison_character_parts.append(
+                            "Dominantní interpretace Série 1 má vyšší absolutní podporu metrik než dominantní interpretace Série 2."
+                        )
+                    elif best_score_2 > best_score_1 + 1.0:
+                        comparison_character_parts.append(
+                            "Dominantní interpretace Série 2 má vyšší absolutní podporu metrik než dominantní interpretace Série 1."
+                        )
+                    else:
+                        comparison_character_parts.append(
+                            "Obě dominantní interpretace mají podobně silnou absolutní podporu metrik."
+                        )
+
+                    st.info(" ".join(comparison_character_parts))
+
                     st.caption(
                         "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
-                        "small-world charakteru a variability stupňového rozdělení."
+                        "small-world charakteru, variability stupňového rozdělení a relativní dominance výsledné interpretace."
                     )
-                            
+                    
+                    st.markdown("### Grafické porovnání podpory interpretací")
+
+                    df_class_cmp = pd.DataFrame(
+                        {
+                            "Interpretace": [
+                                "Pravidelná / periodická",
+                                "Komplexní / chaotická",
+                                "Stochastická / náhodná",
+                                "Pravidelná / periodická",
+                                "Komplexní / chaotická",
+                                "Stochastická / náhodná",
+                            ],
+                            "Podpora (%)": [
+                                classification1["normalized_scores"]["Spíše pravidelná / periodická"],
+                                classification1["normalized_scores"]["Spíše komplexní deterministická / chaotická"],
+                                classification1["normalized_scores"]["Spíše stochastická / náhodná"],
+                                classification2["normalized_scores"]["Spíše pravidelná / periodická"],
+                                classification2["normalized_scores"]["Spíše komplexní deterministická / chaotická"],
+                                classification2["normalized_scores"]["Spíše stochastická / náhodná"],
+                            ],
+                            "Série": [
+                                "Série 1",
+                                "Série 1",
+                                "Série 1",
+                                "Série 2",
+                                "Série 2",
+                                "Série 2",
+                            ],
+                        }
+                    )
+
+                    fig_class_cmp = px.bar(
+                        df_class_cmp,
+                        x="Interpretace",
+                        y="Podpora (%)",
+                        color="Série",
+                        barmode="group",
+                        title="Porovnání podpory jednotlivých interpretací",
+                        labels={
+                            "Interpretace": "Typ interpretace",
+                            "Podpora (%)": "Podpora (%)",
+                        },
+                    )
+
+                    fig_class_cmp.update_layout(yaxis_range=[0, 100])
+                    st.plotly_chart(fig_class_cmp, use_container_width=True)
+
+                    st.caption(
+                        "Graf ukazuje, jak silně síťové metriky podporují jednotlivé typy interpretace u Série 1 a Série 2."
+                    )
+                    
+                    st.markdown("### Automatická interpretace porovnání klasifikace")
+
+                    comparison_class_text = []
+
+                    if classification1["label"] == classification2["label"]:
+                        comparison_class_text.append(
+                            f"Obě série směřují ke stejné hlavní interpretaci: **{classification1['label']}**."
+                        )
+                    else:
+                        comparison_class_text.append(
+                            f"Série 1 směřuje spíše k interpretaci **{classification1['label']}**, "
+                            f"zatímco Série 2 k interpretaci **{classification2['label']}**."
+                        )
+
+                    if classification1["dominance_ratio"] > classification2["dominance_ratio"] + 0.08:
+                        comparison_class_text.append(
+                            "U Série 1 je dominantní interpretace výraznější, takže její klasifikace působí jednoznačněji."
+                        )
+                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"] + 0.08:
+                        comparison_class_text.append(
+                            "U Série 2 je dominantní interpretace výraznější, takže její klasifikace působí jednoznačněji."
+                        )
+                    else:
+                        comparison_class_text.append(
+                            "Míra dominance hlavní interpretace je u obou sérií podobná."
+                        )
+
+                    if classification1["confidence"] == classification2["confidence"]:
+                        comparison_class_text.append(
+                            f"Obě série mají podobnou úroveň jistoty klasifikace: **{classification1['confidence']}**."
+                        )
+                    else:
+                        comparison_class_text.append(
+                            f"Jistota klasifikace se liší: Série 1 = **{classification1['confidence']}**, "
+                            f"Série 2 = **{classification2['confidence']}**."
+                        )
+
+                    st.info(" ".join(comparison_class_text))
+                    
+                    
+                    st.markdown("### Procentuální podpora jednotlivých interpretací")
+
+                    st.markdown("**Série 1**")
+                    p1_col1, p1_col2, p1_col3 = st.columns(3)
+
+                    with p1_col1:
+                        st.metric(
+                            "Pravidelná / periodická",
+                            f"{classification1['normalized_scores']['Spíše pravidelná / periodická']} %"
+                        )
+                    with p1_col2:
+                        st.metric(
+                            "Komplexní / chaotická",
+                            f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']} %"
+                        )
+                    with p1_col3:
+                        st.metric(
+                            "Stochastická / náhodná",
+                            f"{classification1['normalized_scores']['Spíše stochastická / náhodná']} %"
+                        )
+
+                    st.markdown("**Série 2**")
+                    p2_col1, p2_col2, p2_col3 = st.columns(3)
+
+                    with p2_col1:
+                        st.metric(
+                            "Pravidelná / periodická",
+                            f"{classification2['normalized_scores']['Spíše pravidelná / periodická']} %"
+                        )
+                    with p2_col2:
+                        st.metric(
+                            "Komplexní / chaotická",
+                            f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']} %"
+                        )
+                    with p2_col3:
+                        st.metric(
+                            "Stochastická / náhodná",
+                            f"{classification2['normalized_scores']['Spíše stochastická / náhodná']} %"
+                        )
+
+                    st.caption(
+                        "Tyto hodnoty představují relativní rozdělení podpory mezi jednotlivé interpretační směry. "
+                        "Nejde o pravděpodobnost v přísném statistickém smyslu, ale o normalizované skóre odvozené z HVG metrik."
+                    )
+                    
+                    st.markdown("### Stručný závěr z klasifikace")
+
+                    final_compare_parts = []
+
+                    final_compare_parts.append(
+                        f"U Série 1 dominuje interpretace **{classification1['label']}** "
+                        f"se silou **{classification1['best_score']:.1f} bodu**."
+                    )
+
+                    final_compare_parts.append(
+                        f"U Série 2 dominuje interpretace **{classification2['label']}** "
+                        f"se silou **{classification2['best_score']:.1f} bodu**."
+                    )
+
+                    if classification1["label"] == classification2["label"]:
+                        final_compare_parts.append(
+                            "Obě série směřují ke stejnému orientačnímu typu dynamiky."
+                        )
+                    else:
+                        final_compare_parts.append(
+                            "Série se z hlediska HVG klasifikace liší, takže jejich strukturální charakter není stejný."
+                        )
+
+                    if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
+                        final_compare_parts.append(
+                            "U Série 1 je dominantní interpretace výraznější než u Série 2."
+                        )
+                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
+                        final_compare_parts.append(
+                            "U Série 2 je dominantní interpretace výraznější než u Série 1."
+                        )
+                    else:
+                        final_compare_parts.append(
+                            "Dominance hlavní interpretace je u obou sérií podobná."
+                        )
+
+                    st.success(" ".join(final_compare_parts))
+                    
+                    st.markdown("**Grafické porovnání skóre klasifikace**")
+
+                    scores_compare_df = pd.DataFrame({
+                        "Interpretace": list(classification1["scores"].keys()),
+                        "Série 1": list(classification1["scores"].values()),
+                        "Série 2": list(classification2["scores"].values()),
+                    })
+
+                    scores_compare_long = scores_compare_df.melt(
+                        id_vars="Interpretace",
+                        var_name="Série",
+                        value_name="Skóre"
+                    )
+
+                    fig_scores_cmp = px.bar(
+                        scores_compare_long,
+                        x="Interpretace",
+                        y="Skóre",
+                        color="Série",
+                        barmode="group",
+                        title="Porovnání skóre klasifikace obou sérií",
+                        text="Skóre",
+                    )
+
+                    fig_scores_cmp.update_traces(textposition="outside")
+                    fig_scores_cmp.update_layout(
+                        xaxis_title="Typ interpretace",
+                        yaxis_title="Skóre podpory",
+                    )
+
+                    st.plotly_chart(fig_scores_cmp, use_container_width=True)
+
+                    st.caption(
+                        "Graf ukazuje, jak silně jednotlivé síťové metriky podporují tři hlavní interpretace "
+                        "u obou časových řad. Vyšší sloupec znamená silnější podporu daného typu chování."
+                    )        
             # =============================
             #  Arc Diagram HVG – obě série
             # =============================
