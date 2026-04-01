@@ -2385,9 +2385,15 @@ if analysis_mode == "Časová řada → HVG":
 
 
 
-         # ====== Shrnutí analýzy ======
+               # ====== Shrnutí analýzy ======
         if "Shrnutí analýzy" in selected_sections:
             st.subheader("Shrnutí analýzy")
+
+            experiment_name_single = st.text_input(
+                "Název experimentu",
+                value="Analýza jedné časové řady",
+                key="single_experiment_name",
+            )
 
             series_name = st.session_state.get("series_name", None)
             is_normalized = st.session_state.get("series_normalized", False)
@@ -2405,8 +2411,48 @@ if analysis_mode == "Časová řada → HVG":
                 aggregation_freq=aggregation_freq_used,
                 series_name=series_name,
             )
-            
 
+            classification = classify_series_from_hvg(
+                avg_deg=avg_deg,
+                C=C,
+                L=L,
+                sigma_sw=sigma_sw,
+                assort=assort,
+                entropy_deg_norm=entropy_deg_norm_global,
+                powerlaw_p=powerlaw_p_result,
+                powerlaw_R=powerlaw_R_result,
+                C_rand=C_rand,
+                L_rand=L_rand,
+                sigma_conf=sigma_conf,
+            )
+
+            # =========================
+            # Mini validace vstupu
+            # =========================
+            validation_messages = []
+
+            if len(arr) < 10:
+                validation_messages.append(
+                    "Časová řada je velmi krátká (méně než 10 bodů), takže výsledky mohou být silně nestabilní."
+                )
+            elif len(arr) < 30:
+                validation_messages.append(
+                    "Časová řada je poměrně krátká (méně než 30 bodů), takže interpretace může být méně spolehlivá."
+                )
+
+            if n_nodes < 10:
+                validation_messages.append(
+                    "HVG má velmi málo vrcholů, takže některé síťové metriky a klasifikační závěry mohou být méně robustní."
+                )
+
+            if validation_messages:
+                st.markdown("**Upozornění k interpretaci**")
+                for msg in validation_messages:
+                    st.warning(msg)
+
+            # =========================
+            # Rychlé metriky nahoře
+            # =========================
             col_sum1, col_sum2, col_sum3 = st.columns(3)
 
             with col_sum1:
@@ -2424,35 +2470,21 @@ if analysis_mode == "Časová řada → HVG":
                     f"{sigma_sw:.2f}" if sigma_sw is not None and not np.isnan(sigma_sw) else "N/A"
                 )
 
+            # =========================
+            # Textové shrnutí
+            # =========================
             st.markdown("**Technické shrnutí**")
             st.info(technical_text)
 
-            st.markdown("**Interpretace časové řady**")
+            st.markdown("**Interpretace řady**")
             st.write(interpretation_text)
 
-            st.markdown("**Závěrečný verdikt**")
-            st.success(verdict_text)
             # =========================
-            # Orientační strukturální klasifikace řady
+            # Orientační klasifikace
             # =========================
-            classification = classify_series_from_hvg(
-                avg_deg=avg_deg,
-                C=C,
-                L=L,
-                sigma_sw=sigma_sw,
-                assort=assort,
-                entropy_deg_norm=entropy_deg_norm_global,
-                powerlaw_p=powerlaw_p_result,
-                powerlaw_R=powerlaw_R_result,
-                C_rand=C_rand,
-                L_rand=L_rand,
-                sigma_conf=sigma_conf,
-            )
-
-            st.markdown("**Orientační strukturální klasifikace časové řady**")
-
+            st.markdown("**Orientační klasifikace**")
             classification_text = (
-                f"Nejpravděpodobnější charakter řady: **{classification['label']}** "
+                f"**{classification['label']}** "
                 f"(jistota: **{classification['confidence']}**)"
             )
 
@@ -2462,22 +2494,30 @@ if analysis_mode == "Časová řada → HVG":
                 st.warning(classification_text)
             else:
                 st.info(classification_text)
+
             st.caption(get_classification_status_text(classification))
-            
-            st.markdown("**Zdůvodnění klasifikace**")
+
+            st.markdown("**Zdůvodnění**")
             st.write(classification["reason_text"])
-            st.caption(f"Alternativní interpretace: {classification['alternative_label']}. {classification['score_gap_text']}")
-            st.caption(
-                f"Síla dominance hlavní interpretace: {classification['dominance_text']} "
-                f"(podíl dominantního skóre: {classification['dominance_ratio']:.2f})."
-            )
-            st.caption(
-                f"Síla dominance hlavní interpretace: {classification['dominance_ratio']:.2f}. "
+
+            st.markdown("**Stabilita a charakter výsledku**")
+            st.info(
+                f"{classification['structure_text']} "
+                f"Alternativní interpretace: {classification['alternative_label']}. "
+                f"{classification['score_gap_text']} "
+                f"{classification['gap_text']} "
                 f"{classification['dominance_text']}"
             )
-            st.markdown("**Charakter sítě**")
-            st.write(classification["structure_text"])
-            
+
+            # =========================
+            # Závěr
+            # =========================
+            st.markdown("**Závěr**")
+            st.warning(verdict_text)
+
+            # =========================
+            # Skóre interpretací
+            # =========================
             st.markdown("**Skóre jednotlivých interpretací**")
             score_col1, score_col2, score_col3 = st.columns(3)
 
@@ -2501,67 +2541,36 @@ if analysis_mode == "Časová řada → HVG":
                     f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
                     delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
                 )
-            st.caption(
-                "První číslo představuje bodové skóre dané interpretace. Procento ukazuje její relativní podíl na celkovém skóre všech tří možností."
-            )
-            st.caption(
-                "Relativní podíl skóre: "
-                f"pravidelná {classification['normalized_scores']['Spíše pravidelná / periodická']} %, "
-                f"komplexní {classification['normalized_scores']['Spíše komplexní deterministická / chaotická']} %, "
-                f"stochastická {classification['normalized_scores']['Spíše stochastická / náhodná']} %."
-            )
+
             st.caption(
                 "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
-                "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre. "
-                "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
-            )
-            st.markdown("**Síla dominantní interpretace**")
-            st.markdown("**Rozdíl mezi hlavní a alternativní interpretací**")
-            st.markdown("**Pořadí interpretací podle podpory metrik**")
-            st.info(classification["ranking_text"])
-            if classification["best_score"] - classification["second_score"] >= 3:
-                st.success(classification["gap_text"])
-            elif classification["best_score"] - classification["second_score"] >= 1.5:
-                st.info(classification["gap_text"])
-            else:
-                st.warning(classification["gap_text"])
-            if classification["dominance_ratio"] >= 0.60:
-                st.success(classification["dominance_text"])
-            elif classification["dominance_ratio"] >= 0.45:
-                st.info(classification["dominance_text"])
-            else:
-                st.warning(classification["dominance_text"])    
-            st.markdown("**Relativní síla interpretací**")
-
-            st.write("Pravidelná / periodická")
-            st.progress(classification["normalized_scores"]["Spíše pravidelná / periodická"] / 100)
-            st.caption(f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %")
-
-            st.write("Komplexní / chaotická")
-            st.progress(classification["normalized_scores"]["Spíše komplexní deterministická / chaotická"] / 100)
-            st.caption(f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %")
-
-            st.write("Stochastická / náhodná")
-            st.progress(classification["normalized_scores"]["Spíše stochastická / náhodná"] / 100)
-            st.caption(f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %")
-            st.caption(
-                "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
+                "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre."
             )
 
-            st.caption(
-                f"Míra dominance hlavní interpretace: {classification['dominance_ratio']:.2f}. "
-                f"{classification['dominance_text']}"
-            )
-            st.markdown("**Síla dominantní interpretace**")
-            st.write(
-                f"Podíl dominantní interpretace na celkovém skóre je "
-                f"**{classification['dominance_ratio'] * 100:.1f} %**."
-            )
-            st.caption(classification["dominance_text"])
-            
+            # =========================
+            # Relativní podpora interpretací
+            # =========================
+            st.markdown("**Relativní podpora interpretací**")
+
+            labels_progress = [
+                ("Pravidelná / periodická", "Spíše pravidelná / periodická"),
+                ("Komplexní / chaotická", "Spíše komplexní deterministická / chaotická"),
+                ("Stochastická / náhodná", "Spíše stochastická / náhodná"),
+            ]
+
+            for label_text, key in labels_progress:
+                st.write(label_text)
+                st.progress(classification["normalized_scores"][key] / 100)
+                st.caption(f"{classification['normalized_scores'][key]:.1f} %")
+
+            st.caption(classification["stability_text"])
+            st.caption(classification["mixed_text"])
             st.caption(classification["warning_text"])
-            
-            st.markdown("**Grafické zobrazení skóre klasifikace**")
+
+            # =========================
+            # Grafické porovnání surového skóre
+            # =========================
+            st.markdown("### Grafické zobrazení skóre klasifikace")
 
             scores_single_df = pd.DataFrame({
                 "Interpretace": list(classification["scores"].keys()),
@@ -2585,49 +2594,49 @@ if analysis_mode == "Časová řada → HVG":
             st.plotly_chart(fig_scores_single, use_container_width=True)
 
             st.caption(
-                "Sloupcový graf ukazuje, jak silně síťové metriky podporují jednotlivé interpretace "
-                "dané časové řady."
+                "Graf ukazuje, jak silně síťové metriky podporují jednotlivé interpretace dané časové řady."
             )
-            
-            st.markdown("**Procentuální rozložení podpory interpretací**")
-            st.caption(
-                "Procenta vyjadřují relativní podíl podpory jednotlivých interpretací na základě použitých HVG metrik."
+
+            if experiment_name_single.strip():
+                st.caption(f"Název experimentu: {experiment_name_single}")
+
+            # =========================
+            # Export souhrnné klasifikace
+            # =========================
+            st.markdown("### Export souhrnné klasifikace")
+
+            summary_single_df = pd.DataFrame([
+                {
+                    "experiment_name": experiment_name_single,
+                    "series_name": series_name,
+                    "n_points": len(arr),
+                    "n_nodes": n_nodes,
+                    "n_edges": n_edges,
+                    "avg_degree": avg_deg,
+                    "clustering": C,
+                    "avg_path_length": L,
+                    "sigma": sigma_sw,
+                    "entropy_deg_norm": entropy_deg_norm_global,
+                    "label": classification["label"],
+                    "confidence": classification["confidence"],
+                    "alternative_label": classification["alternative_label"],
+                    "dominance_ratio": classification["dominance_ratio"],
+                    "best_score": classification["best_score"],
+                    "second_score": classification["second_score"],
+                    "verdict": verdict_text,
+                }
+            ])
+
+            summary_single_csv = summary_single_df.to_csv(index=False).encode("utf-8")
+
+            st.download_button(
+                "Exportovat souhrnnou klasifikaci (CSV)",
+                data=summary_single_csv,
+                file_name="single_series_summary_classification.csv",
+                mime="text/csv",
             )
-            st.caption(classification["stability_text"])
-            st.caption(classification["mixed_text"])
-            if classification["label"] != "Smíšená / neurčitá":
-                st.info(
-                    f"Převažující interpretace: {classification['label']}. {classification['dominance_text']}"
-                )
-            else:
-                st.warning(
-                    f"Výsledek zůstává smíšený nebo neurčitý. {classification['dominance_text']}"
-                )
-            norm_score_col1, norm_score_col2, norm_score_col3 = st.columns(3)
 
-            with norm_score_col1:
-                st.metric(
-                    "Pravidelná / periodická (%)",
-                    f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
-                )
-
-            with norm_score_col2:
-                st.metric(
-                    "Komplexní / chaotická (%)",
-                    f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
-                )
-
-            with norm_score_col3:
-                st.metric(
-                    "Stochastická / náhodná (%)",
-                    f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
-                )
-
-            st.caption(
-                f"Dominance hlavní interpretace: {classification['dominance_ratio'] * 100:.1f} %. "
-                f"{classification['dominance_text']}"
-            )
-        st.markdown("---")    
+        st.markdown("---")
 
         # =========================
         #  Arc diagram HVG
@@ -2735,7 +2744,6 @@ if analysis_mode == "Časová řada → HVG":
                     file_name="hvg_metrics.csv",
                     mime="text/csv",
                 )
-
 # ===== tady v další odpovědi navážeme REŽIMEM 2: Vlastní graf … =====
 # =====================================================================
 #  REŽIM 2: VLASTNÍ GRAF Z NODE/EDGE LISTU NEBO CSV
@@ -5871,6 +5879,12 @@ else:  # "Porovnat dvě časové řady"
                 if "Shrnutí analýzy" in selected_sections_cmp:
                     st.markdown("### Shrnutí analýzy")
 
+                    experiment_name_cmp = st.text_input(
+                        "Název experimentu / porovnání",
+                        value="Porovnání série 1 a série 2",
+                        key="cmp_experiment_name",
+                    )
+
                     tech1, interp1, verdict1 = generate_hvg_summary_text(
                         n_nodes=n1,
                         n_edges=m1,
@@ -5896,6 +5910,7 @@ else:  # "Porovnat dvě časové řady"
                         aggregation_freq=st.session_state.get("series_aggregation2", None),
                         series_name=st.session_state.get("series_name2", "Série 2"),
                     )
+
                     classification1 = classify_series_from_hvg(
                         avg_deg=avg_deg1,
                         C=C1,
@@ -5924,416 +5939,201 @@ else:  # "Porovnat dvě časové řady"
                         sigma_conf=sigma2c,
                     )
 
+                    # =============================
+                    # Funkce pro vykreslení série
+                    # =============================
+                    def render_series_summary(title, tech, interp, verdict, classification, n_points, n_nodes_local):
+                        st.markdown(f"## {title}")
+
+                        # ---- VALIDACE ----
+                        validation_messages = []
+
+                        if n_points < 10:
+                            validation_messages.append(
+                                "Časová řada je velmi krátká (méně než 10 bodů), takže výsledky mohou být silně nestabilní."
+                            )
+                        elif n_points < 30:
+                            validation_messages.append(
+                                "Časová řada je poměrně krátká (méně než 30 bodů), takže interpretace může být méně spolehlivá."
+                            )
+
+                        if n_nodes_local < 10:
+                            validation_messages.append(
+                                "HVG má velmi málo vrcholů, takže některé síťové metriky a klasifikační závěry mohou být méně robustní."
+                            )
+
+                        if validation_messages:
+                            st.markdown("**Upozornění k interpretaci**")
+                            for msg in validation_messages:
+                                st.warning(msg)
+
+                        # ---- TEXTY ----
+                        st.markdown("**Technické shrnutí**")
+                        st.info(tech)
+
+                        st.markdown("**Interpretace řady**")
+                        st.write(interp)
+
+                        # ---- KLASIFIKACE ----
+                        st.markdown("**Orientační klasifikace**")
+                        classification_text = (
+                            f"**{classification['label']}** "
+                            f"(jistota: **{classification['confidence']}**)"
+                        )
+
+                        if classification["confidence"] == "vyšší":
+                            st.success(classification_text)
+                        elif classification["confidence"] == "střední":
+                            st.warning(classification_text)
+                        else:
+                            st.info(classification_text)
+
+                        st.caption(get_classification_status_text(classification))
+
+                        # ---- DETAIL ----
+                        st.markdown("**Zdůvodnění**")
+                        st.write(classification["reason_text"])
+
+                        st.markdown("**Stabilita a charakter výsledku**")
+                        st.info(
+                            f"{classification['structure_text']} "
+                            f"Alternativní interpretace: {classification['alternative_label']}. "
+                            f"{classification['score_gap_text']} "
+                            f"{classification['gap_text']} "
+                            f"{classification['dominance_text']}"
+                        )
+
+                        # ---- VERDIKT ----
+                        st.markdown("**Závěr**")
+                        st.warning(verdict)
+
+                        # ---- METRIKY ----
+                        st.markdown("**Skóre jednotlivých interpretací**")
+                        c1, c2, c3 = st.columns(3)
+
+                        with c1:
+                            st.metric(
+                                "Pravidelná / periodická",
+                                f"{classification['scores']['Spíše pravidelná / periodická']:.1f}",
+                                delta=f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
+                            )
+
+                        with c2:
+                            st.metric(
+                                "Komplexní / chaotická",
+                                f"{classification['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
+                                delta=f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
+                            )
+
+                        with c3:
+                            st.metric(
+                                "Stochastická / náhodná",
+                                f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
+                                delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
+                            )
+
+                        st.caption(
+                            "Hlavní číslo = bodové skóre. Procento = relativní podíl interpretace."
+                        )
+
+                        # ---- PROGRESS ----
+                        st.markdown("**Relativní podpora interpretací**")
+
+                        mapping = [
+                            ("Pravidelná / periodická", "Spíše pravidelná / periodická"),
+                            ("Komplexní / chaotická", "Spíše komplexní deterministická / chaotická"),
+                            ("Stochastická / náhodná", "Spíše stochastická / náhodná"),
+                        ]
+
+                        for label, key in mapping:
+                            st.write(label)
+                            st.progress(classification["normalized_scores"][key] / 100)
+                            st.caption(f"{classification['normalized_scores'][key]:.1f} %")
+
+                        st.caption(classification["stability_text"])
+                        st.caption(classification["mixed_text"])
+                        st.caption(classification["warning_text"])
+
+                    # =============================
+                    # Vykreslení obou sérií
+                    # =============================
                     col_s1, col_s2 = st.columns(2)
 
                     with col_s1:
-                        st.markdown("## Série 1")
-                        st.markdown("**Technické shrnutí**")
-                        st.info(tech1)
-
-                        st.markdown("**Interpretace časové řady**")
-                        st.write(interp1)
-
-                        st.markdown("**Orientační klasifikace**")
-                        classification_text_1 = (
-                            f"**{classification1['label']}** "
-                            f"(jistota: **{classification1['confidence']}**)"
+                        render_series_summary(
+                            "Série 1",
+                            tech1,
+                            interp1,
+                            verdict1,
+                            classification1,
+                            n_points=len(data1),
+                            n_nodes_local=n1,
                         )
 
-                        if classification1["confidence"] == "vyšší":
-                            st.success(classification_text_1)
-                        elif classification1["confidence"] == "střední":
-                            st.warning(classification_text_1)
-                        else:
-                            st.info(classification_text_1)
-                        st.caption(get_classification_status_text(classification1))
-                        st.write(classification1["reason_text"])
-                        st.caption(f"Alternativní interpretace: {classification1['alternative_label']}. {classification1['score_gap_text']}")
-                        st.caption(
-                            f"Síla dominance hlavní interpretace: {classification1['dominance_text']} "
-                            f"(podíl dominantního skóre: {classification1['dominance_ratio']:.2f})."
-                        )
-                        st.caption(
-                            f"Síla dominance hlavní interpretace: {classification1['dominance_ratio']:.2f}. "
-                            f"{classification1['dominance_text']}"
-                        )
-                        st.markdown("**Charakter sítě**")
-                        st.caption(classification1["structure_text"])
-
-                        st.markdown("**Závěrečný verdikt**")
-                        st.warning(verdict1)
-                        st.markdown("**Skóre jednotlivých interpretací**")
-                        score1_col1, score1_col2, score1_col3 = st.columns(3)
-
-                        best_label_1 = classification1["label"]
-
-                        if best_label_1 == "Smíšená / neurčitá":
-                            delta_reg_1 = None
-                            delta_chaos_1 = None
-                            delta_stoch_1 = None
-                        else:
-                            delta_reg_1 = "dominantní" if best_label_1 == "Spíše pravidelná / periodická" else None
-                            delta_chaos_1 = "dominantní" if best_label_1 == "Spíše komplexní deterministická / chaotická" else None
-                            delta_stoch_1 = "dominantní" if best_label_1 == "Spíše stochastická / náhodná" else None
-
-                        with score1_col1:
-                            st.metric(
-                                "Pravidelná / periodická",
-                                f"{classification1['scores']['Spíše pravidelná / periodická']:.1f}",
-                                delta=f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
-                            )
-                        with score1_col2:
-                            st.metric(
-                                "Komplexní / chaotická",
-                                f"{classification1['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
-                                delta=f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
-                            )
-                        with score1_col3:
-                            st.metric(
-                                "Stochastická / náhodná",
-                                f"{classification1['scores']['Spíše stochastická / náhodná']:.1f}",
-                                delta=f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
-                            )
-                        st.caption(
-                            "První číslo představuje bodové skóre dané interpretace. Procento ukazuje její relativní podíl na celkovém skóre všech tří možností."
-                        )    
-                        st.caption(
-                            "Relativní podíl skóre: "
-                            f"pravidelná {classification1['normalized_scores']['Spíše pravidelná / periodická']} %, "
-                            f"komplexní {classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']} %, "
-                            f"stochastická {classification1['normalized_scores']['Spíše stochastická / náhodná']} %."
-                        )
-                        st.caption(
-                            "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
-                            "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre. "
-                            "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
-                        )
-                        st.markdown("**Síla dominantní interpretace**")
-                        st.markdown("**Rozdíl mezi hlavní a alternativní interpretací**")
-                        st.markdown("**Pořadí interpretací podle podpory metrik**")
-                        st.info(classification1["ranking_text"])
-                        if classification1["best_score"] - classification1["second_score"] >= 3:
-                            st.success(classification1["gap_text"])
-                        elif classification1["best_score"] - classification1["second_score"] >= 1.5:
-                            st.info(classification1["gap_text"])
-                        else:
-                            st.warning(classification1["gap_text"])
-                        if classification1["dominance_ratio"] >= 0.60:
-                            st.success(classification1["dominance_text"])
-                        elif classification1["dominance_ratio"] >= 0.45:
-                            st.info(classification1["dominance_text"])
-                        else:
-                            st.warning(classification1["dominance_text"])    
-                        st.markdown("**Relativní síla interpretací**")
-
-                        st.write("Pravidelná / periodická")
-                        st.progress(classification1["normalized_scores"]["Spíše pravidelná / periodická"] / 100)
-                        st.caption(f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %")
-
-                        st.write("Komplexní / chaotická")
-                        st.progress(classification1["normalized_scores"]["Spíše komplexní deterministická / chaotická"] / 100)
-                        st.caption(f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %")
-
-                        st.write("Stochastická / náhodná")
-                        st.progress(classification1["normalized_scores"]["Spíše stochastická / náhodná"] / 100)
-                        st.caption(f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %")
-
-                        st.caption(
-                            "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
-                        )
-
-                        st.caption(
-                            f"Míra dominance hlavní interpretace: {classification1['dominance_ratio']:.2f}. "
-                            f"{classification1['dominance_text']}"
-                        )
-
-                        st.markdown("**Procentuální rozložení podpory interpretací**")
-                        st.caption(
-                            "Procenta vyjadřují relativní podíl podpory jednotlivých interpretací na základě použitých HVG metrik."
-                        )
-                        st.caption(classification1["stability_text"])
-                        st.caption(classification1["mixed_text"])
-                        if classification1["label"] != "Smíšená / neurčitá":
-                            st.info(
-                                f"Převažující interpretace: {classification1['label']}. {classification1['dominance_text']}"
-                            )
-                        else:
-                            st.warning(
-                                f"Výsledek zůstává smíšený nebo neurčitý. {classification1['dominance_text']}"
-                            )
-                        norm1_col1, norm1_col2, norm1_col3 = st.columns(3)
-
-                        with norm1_col1:
-                            st.metric(
-                                "Pravidelná / periodická (%)",
-                                f"{classification1['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
-                            )
-
-                        with norm1_col2:
-                            st.metric(
-                                "Komplexní / chaotická (%)",
-                                f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
-                            )
-
-                        with norm1_col3:
-                            st.metric(
-                                "Stochastická / náhodná (%)",
-                                f"{classification1['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
-                            )
-
-                        st.caption(
-                            f"Dominance hlavní interpretace: {classification1['dominance_ratio'] * 100:.1f} %. "
-                            f"{classification1['dominance_text']}"
-                        )
-                        st.markdown("**Síla dominantní interpretace**")
-                        st.write(
-                            f"Podíl dominantní interpretace na celkovém skóre je "
-                            f"**{classification1['dominance_ratio'] * 100:.1f} %**."
-                        )
-                        st.caption(classification1["dominance_text"])
-                        
-                        st.caption(classification1["warning_text"])
-                        
                     with col_s2:
-                        st.markdown("## Série 2")
-                        st.markdown("**Technické shrnutí**")
-                        st.info(tech2)
-
-                        st.markdown("**Interpretace časové řady**")
-                        st.write(interp2)
-
-                        st.markdown("**Orientační klasifikace**")
-                        classification_text_2 = (
-                            f"**{classification2['label']}** "
-                            f"(jistota: **{classification2['confidence']}**)"
+                        render_series_summary(
+                            "Série 2",
+                            tech2,
+                            interp2,
+                            verdict2,
+                            classification2,
+                            n_points=len(data2),
+                            n_nodes_local=n2,
                         )
 
-                        if classification2["confidence"] == "vyšší":
-                            st.success(classification_text_2)
-                        elif classification2["confidence"] == "střední":
-                            st.warning(classification_text_2)
-                        else:
-                            st.info(classification_text_2)
-                        st.caption(get_classification_status_text(classification2))
-                        st.write(classification2["reason_text"])
-                        st.caption(f"Alternativní interpretace: {classification2['alternative_label']}. {classification2['score_gap_text']}")
-                        st.caption(
-                            f"Síla dominance hlavní interpretace: {classification2['dominance_text']} "
-                            f"(podíl dominantního skóre: {classification2['dominance_ratio']:.2f})."
-                        )
-                        st.caption(
-                            f"Síla dominance hlavní interpretace: {classification2['dominance_ratio']:.2f}. "
-                            f"{classification2['dominance_text']}"
-                        )
-                        st.markdown("**Charakter sítě**")
-                        st.caption(classification2["structure_text"])
-
-                        st.markdown("**Závěrečný verdikt**")
-                        st.warning(verdict2)
-                        st.markdown("**Skóre jednotlivých interpretací**")
-                        score2_col1, score2_col2, score2_col3 = st.columns(3)
-
-                        best_label_2 = classification2["label"]
-
-                        if best_label_2 == "Smíšená / neurčitá":
-                            delta_reg_2 = None
-                            delta_chaos_2 = None
-                            delta_stoch_2 = None
-                        else:
-                            delta_reg_2 = "dominantní" if best_label_2 == "Spíše pravidelná / periodická" else None
-                            delta_chaos_2 = "dominantní" if best_label_2 == "Spíše komplexní deterministická / chaotická" else None
-                            delta_stoch_2 = "dominantní" if best_label_2 == "Spíše stochastická / náhodná" else None
-
-                        with score2_col1:
-                            st.metric(
-                                "Pravidelná / periodická",
-                                f"{classification2['scores']['Spíše pravidelná / periodická']:.1f}",
-                                delta=f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
-                            )
-                        with score2_col2:
-                            st.metric(
-                                "Komplexní / chaotická",
-                                f"{classification2['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
-                                delta=f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
-                            )
-                        with score2_col3:
-                            st.metric(
-                                "Stochastická / náhodná",
-                                f"{classification2['scores']['Spíše stochastická / náhodná']:.1f}",
-                                delta=f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
-                            )
-                        st.caption(
-                            "První číslo představuje bodové skóre dané interpretace. Procento ukazuje její relativní podíl na celkovém skóre všech tří možností."
-                        )    
-                        st.caption(
-                            "Relativní podíl skóre: "
-                            f"pravidelná {classification2['normalized_scores']['Spíše pravidelná / periodická']} %, "
-                            f"komplexní {classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']} %, "
-                            f"stochastická {classification2['normalized_scores']['Spíše stochastická / náhodná']} %."
-                        )
-                        st.caption(
-                            "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
-                            "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre. "
-                            "Nejde o pravděpodobnost ani formální důkaz, ale o orientační syntézu více ukazatelů."
-                        )
-                        st.markdown("**Síla dominantní interpretace**")
-                        st.markdown("**Rozdíl mezi hlavní a alternativní interpretací**")
-                        st.markdown("**Pořadí interpretací podle podpory metrik**")
-                        st.info(classification2["ranking_text"])
-                        if classification2["best_score"] - classification2["second_score"] >= 3:
-                            st.success(classification2["gap_text"])
-                        elif classification2["best_score"] - classification2["second_score"] >= 1.5:
-                            st.info(classification2["gap_text"])
-                        else:
-                            st.warning(classification2["gap_text"])
-                        if classification2["dominance_ratio"] >= 0.60:
-                            st.success(classification2["dominance_text"])
-                        elif classification2["dominance_ratio"] >= 0.45:
-                            st.info(classification2["dominance_text"])
-                        else:
-                            st.warning(classification2["dominance_text"])
-
-                        st.markdown("**Relativní síla interpretací**")
-
-                        st.write("Pravidelná / periodická")
-                        st.progress(classification2["normalized_scores"]["Spíše pravidelná / periodická"] / 100)
-                        st.caption(f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %")
-
-                        st.write("Komplexní / chaotická")
-                        st.progress(classification2["normalized_scores"]["Spíše komplexní deterministická / chaotická"] / 100)
-                        st.caption(f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %")
-
-                        st.write("Stochastická / náhodná")
-                        st.progress(classification2["normalized_scores"]["Spíše stochastická / náhodná"] / 100)
-                        st.caption(f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %")
-                        st.caption(
-                            "Hlavní číslo je surové skóre heuristického klasifikátoru, procento ukazuje relativní podíl dané interpretace na celkovém skóre."
-                        )
-
-                        st.caption(
-                            f"Míra dominance hlavní interpretace: {classification2['dominance_ratio']:.2f}. "
-                            f"{classification2['dominance_text']}")
-
-                        st.markdown("**Procentuální rozložení podpory interpretací**")
-                        st.caption(
-                            "Procenta vyjadřují relativní podíl podpory jednotlivých interpretací na základě použitých HVG metrik."
-                        )
-                        st.caption(classification2["stability_text"])
-                        st.caption(classification2["mixed_text"])
-                        if classification2["label"] != "Smíšená / neurčitá":
-                            st.info(
-                                f"Převažující interpretace: {classification2['label']}. {classification2['dominance_text']}"
-                            )
-                        else:
-                            st.warning(
-                                f"Výsledek zůstává smíšený nebo neurčitý. {classification2['dominance_text']}"
-                            )
-                        norm2_col1, norm2_col2, norm2_col3 = st.columns(3)
-
-                        with norm2_col1:
-                            st.metric(
-                                "Pravidelná / periodická (%)",
-                                f"{classification2['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
-                            )
-
-                        with norm2_col2:
-                            st.metric(
-                                "Komplexní / chaotická (%)",
-                                f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
-                            )
-
-                        with norm2_col3:
-                            st.metric(
-                                "Stochastická / náhodná (%)",
-                                f"{classification2['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
-                            )
-
-                        st.caption(
-                            f"Dominance hlavní interpretace: {classification2['dominance_ratio'] * 100:.1f} %. "
-                            f"{classification2['dominance_text']}"
-                        )
-                        st.markdown("**Síla dominantní interpretace**")
-                        st.write(
-                            f"Podíl dominantní interpretace na celkovém skóre je "
-                            f"**{classification2['dominance_ratio'] * 100:.1f} %**."
-                        )
-                        st.caption(classification2["dominance_text"])
-                        st.caption(classification2["warning_text"])  
-                                          
                     st.markdown("---")
-                    st.markdown("## Porovnání sérií") 
-                    
-                    comparison_parts = []
+                    st.markdown("## Porovnání sérií")
+
+                    # =============================
+                    # Porovnání topologie HVG
+                    # =============================
+                    topology_parts = []
 
                     if not np.isnan(C1) and not np.isnan(C2):
                         if C1 > C2:
-                            comparison_parts.append(
-                                "Série 1 vykazuje vyšší lokální propojenost než Série 2."
-                            )
+                            topology_parts.append("Série 1 vykazuje vyšší lokální propojenost než Série 2.")
                         elif C2 > C1:
-                            comparison_parts.append(
-                                "Série 2 vykazuje vyšší lokální propojenost než Série 1."
-                            )
+                            topology_parts.append("Série 2 vykazuje vyšší lokální propojenost než Série 1.")
                         else:
-                            comparison_parts.append(
-                                "Obě série mají podobnou lokální propojenost."
-                            )
+                            topology_parts.append("Obě série mají podobnou lokální propojenost.")
 
                     if sigma1 is not None and sigma2 is not None and not np.isnan(sigma1) and not np.isnan(sigma2):
                         if sigma1 > sigma2:
-                            comparison_parts.append(
-                                "Z hlediska small-world indexu je Série 1 strukturálně výraznější."
-                            )
+                            topology_parts.append("Z hlediska small-world indexu je Série 1 strukturálně výraznější.")
                         elif sigma2 > sigma1:
-                            comparison_parts.append(
-                                "Z hlediska small-world indexu je Série 2 strukturálně výraznější."
-                            )
+                            topology_parts.append("Z hlediska small-world indexu je Série 2 strukturálně výraznější.")
                         else:
-                            comparison_parts.append(
-                                "Obě série mají podobný small-world charakter."
-                            )
+                            topology_parts.append("Obě série mají podobný small-world charakter.")
 
                     if avg_deg1 > avg_deg2:
-                        comparison_parts.append(
-                            "HVG Série 1 je v průměru propojenější než HVG Série 2."
-                        )
+                        topology_parts.append("HVG Série 1 je v průměru propojenější než HVG Série 2.")
                     elif avg_deg2 > avg_deg1:
-                        comparison_parts.append(
-                            "HVG Série 2 je v průměru propojenější než HVG Série 1."
-                        )
+                        topology_parts.append("HVG Série 2 je v průměru propojenější než HVG Série 1.")
                     else:
-                        comparison_parts.append(
-                            "Obě HVG mají podobnou průměrnou propojenost."
-                        )
+                        topology_parts.append("Obě HVG mají podobnou průměrnou propojenost.")
 
                     if entropy_deg_norm1 > entropy_deg_norm2:
-                        comparison_parts.append(
-                            "Série 1 má vyšší variabilitu stupňového rozdělení než Série 2."
-                        )
+                        topology_parts.append("Série 1 má vyšší variabilitu stupňového rozdělení než Série 2.")
                     elif entropy_deg_norm2 > entropy_deg_norm1:
-                        comparison_parts.append(
-                            "Série 2 má vyšší variabilitu stupňového rozdělení než Série 1."
-                        )
+                        topology_parts.append("Série 2 má vyšší variabilitu stupňového rozdělení než Série 1.")
                     else:
-                        comparison_parts.append(
-                            "Obě série mají podobnou variabilitu stupňového rozdělení."
-                        )
+                        topology_parts.append("Obě série mají podobnou variabilitu stupňového rozdělení.")
 
-                    st.markdown("**Strukturální porovnání**")
-                    st.info(" ".join(comparison_parts))   
-                    
-                    st.markdown("**Porovnání charakteru časových řad**")
+                    st.markdown("**Porovnání topologie HVG**")
+                    st.info(" ".join(topology_parts))
+
+                    # =============================
+                    # Porovnání výsledné interpretace
+                    # =============================
+                    st.markdown("**Porovnání výsledné interpretace**")
 
                     same_label = classification1["label"] == classification2["label"]
                     conf1 = classification1["confidence"]
                     conf2 = classification2["confidence"]
-
                     dom1 = classification1["dominance_ratio"]
                     dom2 = classification2["dominance_ratio"]
-
                     best_score_1 = classification1["best_score"]
                     best_score_2 = classification2["best_score"]
-
                     gap1 = classification1["best_score"] - classification1["second_score"]
                     gap2 = classification2["best_score"] - classification2["second_score"]
 
@@ -6348,64 +6148,66 @@ else:  # "Porovnat dvě časové řady"
                             f"zatímco Série 2 jako **{classification2['label']}**."
                         )
 
-                    comparison_character_parts = []
+                    interpretation_compare_parts = []
 
                     if dom1 > dom2 + 0.08:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Klasifikace Série 1 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
                         )
                     elif dom2 > dom1 + 0.08:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Klasifikace Série 2 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
                         )
                     else:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Obě série mají podobně výraznou dominantní interpretaci."
                         )
 
                     if gap1 > gap2 + 1.0:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 1, takže její závěr je relativně stabilnější."
                         )
                     elif gap2 > gap1 + 1.0:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 2, takže její závěr je relativně stabilnější."
                         )
                     else:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Obě série mají podobnou míru vnitřní jednoznačnosti klasifikace."
                         )
 
                     if conf1 != conf2:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             f"Jistota klasifikace je u Série 1: **{conf1}**, zatímco u Série 2: **{conf2}**."
                         )
                     else:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             f"Obě série mají stejnou slovní úroveň jistoty klasifikace: **{conf1}**."
                         )
 
                     if best_score_1 > best_score_2 + 1.0:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Dominantní interpretace Série 1 má vyšší absolutní podporu metrik než dominantní interpretace Série 2."
                         )
                     elif best_score_2 > best_score_1 + 1.0:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Dominantní interpretace Série 2 má vyšší absolutní podporu metrik než dominantní interpretace Série 1."
                         )
                     else:
-                        comparison_character_parts.append(
+                        interpretation_compare_parts.append(
                             "Obě dominantní interpretace mají podobně silnou absolutní podporu metrik."
                         )
 
-                    st.info(" ".join(comparison_character_parts))
-
+                    st.info(" ".join(interpretation_compare_parts))
                     st.caption(
                         "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
                         "small-world charakteru, variability stupňového rozdělení a relativní dominance výsledné interpretace."
                     )
-                    
-                    st.markdown("### Grafické porovnání podpory interpretací")
+
+                    # =============================
+                    # Grafické porovnání procentuální podpory
+                    # =============================
+                    st.markdown("### Grafické porovnání procentuální podpory interpretací")
 
                     df_class_cmp = pd.DataFrame(
                         {
@@ -6452,134 +6254,10 @@ else:  # "Porovnat dvě časové řady"
                     fig_class_cmp.update_layout(yaxis_range=[0, 100])
                     st.plotly_chart(fig_class_cmp, use_container_width=True)
 
-                    st.caption(
-                        "Graf ukazuje, jak silně síťové metriky podporují jednotlivé typy interpretace u Série 1 a Série 2."
-                    )
-                    
-                    st.markdown("### Automatická interpretace porovnání klasifikace")
-
-                    comparison_class_text = []
-
-                    if classification1["label"] == classification2["label"]:
-                        comparison_class_text.append(
-                            f"Obě série směřují ke stejné hlavní interpretaci: **{classification1['label']}**."
-                        )
-                    else:
-                        comparison_class_text.append(
-                            f"Série 1 směřuje spíše k interpretaci **{classification1['label']}**, "
-                            f"zatímco Série 2 k interpretaci **{classification2['label']}**."
-                        )
-
-                    if classification1["dominance_ratio"] > classification2["dominance_ratio"] + 0.08:
-                        comparison_class_text.append(
-                            "U Série 1 je dominantní interpretace výraznější, takže její klasifikace působí jednoznačněji."
-                        )
-                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"] + 0.08:
-                        comparison_class_text.append(
-                            "U Série 2 je dominantní interpretace výraznější, takže její klasifikace působí jednoznačněji."
-                        )
-                    else:
-                        comparison_class_text.append(
-                            "Míra dominance hlavní interpretace je u obou sérií podobná."
-                        )
-
-                    if classification1["confidence"] == classification2["confidence"]:
-                        comparison_class_text.append(
-                            f"Obě série mají podobnou úroveň jistoty klasifikace: **{classification1['confidence']}**."
-                        )
-                    else:
-                        comparison_class_text.append(
-                            f"Jistota klasifikace se liší: Série 1 = **{classification1['confidence']}**, "
-                            f"Série 2 = **{classification2['confidence']}**."
-                        )
-
-                    st.info(" ".join(comparison_class_text))
-                    
-                    
-                    st.markdown("### Procentuální podpora jednotlivých interpretací")
-
-                    st.markdown("**Série 1**")
-                    p1_col1, p1_col2, p1_col3 = st.columns(3)
-
-                    with p1_col1:
-                        st.metric(
-                            "Pravidelná / periodická",
-                            f"{classification1['normalized_scores']['Spíše pravidelná / periodická']} %"
-                        )
-                    with p1_col2:
-                        st.metric(
-                            "Komplexní / chaotická",
-                            f"{classification1['normalized_scores']['Spíše komplexní deterministická / chaotická']} %"
-                        )
-                    with p1_col3:
-                        st.metric(
-                            "Stochastická / náhodná",
-                            f"{classification1['normalized_scores']['Spíše stochastická / náhodná']} %"
-                        )
-
-                    st.markdown("**Série 2**")
-                    p2_col1, p2_col2, p2_col3 = st.columns(3)
-
-                    with p2_col1:
-                        st.metric(
-                            "Pravidelná / periodická",
-                            f"{classification2['normalized_scores']['Spíše pravidelná / periodická']} %"
-                        )
-                    with p2_col2:
-                        st.metric(
-                            "Komplexní / chaotická",
-                            f"{classification2['normalized_scores']['Spíše komplexní deterministická / chaotická']} %"
-                        )
-                    with p2_col3:
-                        st.metric(
-                            "Stochastická / náhodná",
-                            f"{classification2['normalized_scores']['Spíše stochastická / náhodná']} %"
-                        )
-
-                    st.caption(
-                        "Tyto hodnoty představují relativní rozdělení podpory mezi jednotlivé interpretační směry. "
-                        "Nejde o pravděpodobnost v přísném statistickém smyslu, ale o normalizované skóre odvozené z HVG metrik."
-                    )
-                    
-                    st.markdown("### Stručný závěr z klasifikace")
-
-                    final_compare_parts = []
-
-                    final_compare_parts.append(
-                        f"U Série 1 dominuje interpretace **{classification1['label']}** "
-                        f"se silou **{classification1['best_score']:.1f} bodu**."
-                    )
-
-                    final_compare_parts.append(
-                        f"U Série 2 dominuje interpretace **{classification2['label']}** "
-                        f"se silou **{classification2['best_score']:.1f} bodu**."
-                    )
-
-                    if classification1["label"] == classification2["label"]:
-                        final_compare_parts.append(
-                            "Obě série směřují ke stejnému orientačnímu typu dynamiky."
-                        )
-                    else:
-                        final_compare_parts.append(
-                            "Série se z hlediska HVG klasifikace liší, takže jejich strukturální charakter není stejný."
-                        )
-
-                    if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
-                        final_compare_parts.append(
-                            "U Série 1 je dominantní interpretace výraznější než u Série 2."
-                        )
-                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
-                        final_compare_parts.append(
-                            "U Série 2 je dominantní interpretace výraznější než u Série 1."
-                        )
-                    else:
-                        final_compare_parts.append(
-                            "Dominance hlavní interpretace je u obou sérií podobná."
-                        )
-
-                    st.success(" ".join(final_compare_parts))
-                    
-                    st.markdown("**Grafické porovnání skóre klasifikace**")
+                    # =============================
+                    # Grafické porovnání surového skóre
+                    # =============================
+                    st.markdown("### Grafické porovnání surového skóre")
 
                     scores_compare_df = pd.DataFrame({
                         "Interpretace": list(classification1["scores"].keys()),
@@ -6612,9 +6290,161 @@ else:  # "Porovnat dvě časové řady"
                     st.plotly_chart(fig_scores_cmp, use_container_width=True)
 
                     st.caption(
-                        "Graf ukazuje, jak silně jednotlivé síťové metriky podporují tři hlavní interpretace "
-                        "u obou časových řad. Vyšší sloupec znamená silnější podporu daného typu chování."
-                    )        
+                        "Procentuální graf ukazuje relativní rozdělení podpory mezi interpretace. "
+                        "Graf se surovým skóre ukazuje absolutní sílu podpory jednotlivých směrů."
+                    )
+
+                    # =============================
+                    # Stručný závěr porovnání
+                    # =============================
+                    st.markdown("### Stručný závěr porovnání")
+
+                    final_compare_parts = [
+                        f"U Série 1 dominuje interpretace **{classification1['label']}** se silou **{classification1['best_score']:.1f} bodu**.",
+                        f"U Série 2 dominuje interpretace **{classification2['label']}** se silou **{classification2['best_score']:.1f} bodu**.",
+                    ]
+
+                    if classification1["label"] == classification2["label"]:
+                        final_compare_parts.append(
+                            "Obě série směřují ke stejnému orientačnímu typu dynamiky."
+                        )
+                    else:
+                        final_compare_parts.append(
+                            "Série se z hlediska HVG klasifikace liší, takže jejich strukturální charakter není stejný."
+                        )
+
+                    if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
+                        final_compare_parts.append(
+                            "U Série 1 je dominantní interpretace výraznější než u Série 2."
+                        )
+                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
+                        final_compare_parts.append(
+                            "U Série 2 je dominantní interpretace výraznější než u Série 1."
+                        )
+                    else:
+                        final_compare_parts.append(
+                            "Dominance hlavní interpretace je u obou sérií podobná."
+                        )
+
+                    st.success(" ".join(final_compare_parts))
+
+                    if experiment_name_cmp.strip():
+                        st.caption(f"Název porovnání: {experiment_name_cmp}")
+
+                    same_label_cmp = classification1["label"] == classification2["label"]
+
+                    if not np.isnan(C1) and not np.isnan(C2):
+                        if C1 > C2:
+                            topology_winner = "Série 1"
+                        elif C2 > C1:
+                            topology_winner = "Série 2"
+                        else:
+                            topology_winner = "obě série podobně"
+                    else:
+                        topology_winner = "nelze jednoznačně určit"
+
+                    if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
+                        dominance_winner = "Série 1"
+                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
+                        dominance_winner = "Série 2"
+                    else:
+                        dominance_winner = "obě série podobně"
+
+                    report_col1, report_col2, report_col3 = st.columns(3)
+
+                    with report_col1:
+                        st.metric("Hlavní interpretace Série 1", classification1["label"])
+                        st.metric("Jistota Série 1", classification1["confidence"])
+
+                    with report_col2:
+                        st.metric("Hlavní interpretace Série 2", classification2["label"])
+                        st.metric("Jistota Série 2", classification2["confidence"])
+
+                    with report_col3:
+                        st.metric(
+                            "Shoda interpretace",
+                            "ANO" if same_label_cmp else "NE"
+                        )
+                        st.metric(
+                            "Výraznější dominance",
+                            dominance_winner
+                        )
+
+                    report_text_parts = []
+
+                    if same_label_cmp:
+                        report_text_parts.append(
+                            "Obě série směřují ke stejnému hlavnímu typu interpretace."
+                        )
+                    else:
+                        report_text_parts.append(
+                            "Každá série směřuje k odlišné hlavní interpretaci."
+                        )
+
+                    report_text_parts.append(
+                        f"Z hlediska lokální struktury a topologie působí výrazněji: **{topology_winner}**."
+                    )
+
+                    report_text_parts.append(
+                        f"Z hlediska jednoznačnosti klasifikace působí přesvědčivěji: **{dominance_winner}**."
+                    )
+
+                    st.info(" ".join(report_text_parts))
+
+                    # =============================
+                    # Export souhrnné klasifikace do CSV
+                    # =============================
+                    st.markdown("### Export souhrnné klasifikace")
+
+                    summary_export_df = pd.DataFrame([
+                        {
+                            "experiment_name": experiment_name_cmp,
+                            "series": "Série 1",
+                            "n_points": len(data1),
+                            "n_nodes": n1,
+                            "n_edges": m1,
+                            "avg_degree": avg_deg1,
+                            "clustering": C1,
+                            "avg_path_length": L1,
+                            "sigma": sigma1,
+                            "entropy_deg_norm": entropy_deg_norm1,
+                            "label": classification1["label"],
+                            "confidence": classification1["confidence"],
+                            "alternative_label": classification1["alternative_label"],
+                            "dominance_ratio": classification1["dominance_ratio"],
+                            "best_score": classification1["best_score"],
+                            "second_score": classification1["second_score"],
+                            "verdict": verdict1,
+                        },
+                        {
+                            "experiment_name": experiment_name_cmp,
+                            "series": "Série 2",
+                            "n_points": len(data2),
+                            "n_nodes": n2,
+                            "n_edges": m2,
+                            "avg_degree": avg_deg2,
+                            "clustering": C2,
+                            "avg_path_length": L2,
+                            "sigma": sigma2,
+                            "entropy_deg_norm": entropy_deg_norm2,
+                            "label": classification2["label"],
+                            "confidence": classification2["confidence"],
+                            "alternative_label": classification2["alternative_label"],
+                            "dominance_ratio": classification2["dominance_ratio"],
+                            "best_score": classification2["best_score"],
+                            "second_score": classification2["second_score"],
+                            "verdict": verdict2,
+                        },
+                    ])
+
+                    summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8")
+
+                    st.download_button(
+                        "Exportovat souhrnnou klasifikaci porovnání (CSV)",
+                        data=summary_export_csv,
+                        file_name="comparison_summary_classification.csv",
+                        mime="text/csv",
+                    )
             # =============================
             #  Arc Diagram HVG – obě série
             # =============================
