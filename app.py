@@ -834,15 +834,15 @@ if analysis_mode == "Časová řada → HVG":
         )
 
         if typ == "Náhodná uniformní":
-            length = st.sidebar.slider("Délka řady", 10, 500, 50)
+            length = st.sidebar.slider("Délka řady", 10, 5000, 50)
             low = st.sidebar.number_input("Minimální hodnota", value=0.0, step=0.1)
             high = st.sidebar.number_input("Maximální hodnota", value=1.0, step=0.1)
         elif typ == "Náhodná normální":
-            length = st.sidebar.slider("Délka řady", 10, 500, 50)
+            length = st.sidebar.slider("Délka řady", 10, 5000, 50)
             mu = st.sidebar.number_input("Střední hodnota μ", value=0.0)
             sigma = st.sidebar.number_input("Směrodatná odchylka σ", value=1.0)
         elif typ == "Sinusovka":
-            length = st.sidebar.slider("Délka řady", 10, 500, 100)
+            length = st.sidebar.slider("Délka řady", 10, 5000, 100)
             amp = st.sidebar.number_input("Amplituda", value=1.0)
             freq = st.sidebar.number_input("Frekvence", value=1.0)
         elif typ == "Ruční vstup":
@@ -3845,7 +3845,7 @@ else:  # "Porovnat dvě časové řady"
             )
 
             if typ2 == "Náhodná uniformní":
-                length2 = st.sidebar.slider("Délka řady", 10, 500, 50, key="len_uni_2")
+                length2 = st.sidebar.slider("Délka řady", 10, 5000, 50, key="len_uni_2")
                 low2 = st.sidebar.number_input(
                     "Minimální hodnota", value=0.0, step=0.1, key="low_uni_2"
                 )
@@ -3854,12 +3854,12 @@ else:  # "Porovnat dvě časové řady"
                 )
 
             elif typ2 == "Náhodná normální":
-                length2 = st.sidebar.slider("Délka řady", 10, 500, 50, key="len_norm_2")
+                length2 = st.sidebar.slider("Délka řady", 10, 5000, 50, key="len_norm_2")
                 mu2 = st.sidebar.number_input("Střední hodnota μ", value=0.0, key="mu_norm_2")
                 sigma2 = st.sidebar.number_input("Směrodatná odchylka σ", value=1.0, key="sigma_norm_2")
 
             elif typ2 == "Sinusovka":
-                length2 = st.sidebar.slider("Délka řady", 10, 500, 100, key="len_sin_2")
+                length2 = st.sidebar.slider("Délka řady", 10, 5000, 100, key="len_sin_2")
                 amp2 = st.sidebar.number_input("Amplituda", value=1.0, key="amp_sin_2")
                 freq2 = st.sidebar.number_input("Frekvence", value=1.0, key="freq_sin_2")
 
@@ -6353,12 +6353,14 @@ else:  # "Porovnat dvě časové řady"
                     report_col1, report_col2, report_col3 = st.columns(3)
 
                     with report_col1:
-                        st.metric("Hlavní interpretace Série 1", classification1["label"])
-                        st.metric("Jistota Série 1", classification1["confidence"])
+                        st.markdown("**Hlavní interpretace – Série 1**")
+                        st.success(classification1["label"])
+                        st.caption(f"Jistota: {classification1['confidence']}")
 
                     with report_col2:
-                        st.metric("Hlavní interpretace Série 2", classification2["label"])
-                        st.metric("Jistota Série 2", classification2["confidence"])
+                        st.markdown("**Hlavní interpretace – Série 2**")
+                        st.success(classification2["label"])
+                        st.caption(f"Jistota: {classification2['confidence']}")
 
                     with report_col3:
                         st.metric(
