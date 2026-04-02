@@ -18,11 +18,23 @@ from services.generators import (
 from services.hvg_graph import (
     build_hvg,
     build_configuration_graph_from_hvg,
+    
 )
 from services.analysis import (
+    compute_degree_distribution_metrics,
     shannon_entropy,
     SmallWorldAnalyzer,
     HAS_POWERLAW,
+    compute_configuration_model_metrics,
+    compute_graph_metrics,
+    compute_graph_layout,
+    prepare_network_traces,
+    classify_entropy_level,
+    create_degree_histogram_figure,
+    create_degree_pdf_figure,
+    create_degree_cdf_figure,
+    create_arc_diagram_figure,
+    compute_powerlaw_fit,
 )
 
 
@@ -745,7 +757,66 @@ def get_classification_status_text(classification):
         return "Výsledek je použitelný, ale stále je vhodné zachovat interpretační opatrnost."
     else:
         return "Výsledek naznačuje určitý směr, ale důkaz není příliš silný."
-        
+
+def compute_graph_metrics(G):
+    n_nodes = G.number_of_nodes()
+    n_edges = G.number_of_edges()
+
+    degrees = [d for _, d in G.degree()]
+    avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
+
+    try:
+        C = nx.average_clustering(G)
+    except Exception:
+        C = float("nan")
+
+    is_conn = nx.is_connected(G) if n_nodes > 0 else False
+
+    L = None
+    diam = None
+    if is_conn and n_nodes > 1:
+        try:
+            L = nx.average_shortest_path_length(G)
+        except Exception:
+            L = None
+        try:
+            diam = nx.diameter(G)
+        except Exception:
+            diam = None
+
+    try:
+        assort = nx.degree_assortativity_coefficient(G)
+    except Exception:
+        assort = None
+
+    L_rand = None
+    C_rand = None
+    if n_nodes > 1 and avg_deg > 1:
+        try:
+            L_rand = np.log(n_nodes) / np.log(avg_deg)
+            C_rand = avg_deg / n_nodes
+        except Exception:
+            L_rand = None
+            C_rand = None
+
+    analyzer = SmallWorldAnalyzer(C, L, C_rand, L_rand)
+    sigma = analyzer.sigma
+
+    return {
+        "n_nodes": n_nodes,
+        "n_edges": n_edges,
+        "degrees": degrees,
+        "avg_deg": avg_deg,
+        "C": C,
+        "is_conn": is_conn,
+        "L": L,
+        "diam": diam,
+        "assort": assort,
+        "L_rand": L_rand,
+        "C_rand": C_rand,
+        "sigma": sigma,
+        "analyzer": analyzer,
+    }   
 # =========================
 #  Inicializace session state
 # =========================
@@ -1379,119 +1450,50 @@ if analysis_mode == "Časová řada → HVG":
         
       
            
-        # ====== Analytické statistiky HVG (počítáme vždy, ale zobrazíme jen pokud chceš) ======
-        n_nodes = G.number_of_nodes()
-        n_edges = G.number_of_edges()
-        degrees = [d for _, d in G.degree()]
-        avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
-        unique_deg_all, counts_all = np.unique(degrees, return_counts=True)
-        pk_all = counts_all / counts_all.sum()
+                # ====== Analytické statistiky HVG (počítáme vždy, ale zobrazíme jen pokud chceš) ======
+        metrics_main = compute_graph_metrics(G)
 
-        entropy_deg_global = -np.sum(pk_all * np.log(pk_all)) if len(pk_all) > 0 else 0.0
+        n_nodes = metrics_main["n_nodes"]
+        n_edges = metrics_main["n_edges"]
+        degrees = metrics_main["degrees"]
+        avg_deg = metrics_main["avg_deg"]
+        C = metrics_main["C"]
+        L = metrics_main["L"]
+        diam = metrics_main["diam"]
+        assort = metrics_main["assort"]
+        L_rand = metrics_main["L_rand"]
+        C_rand = metrics_main["C_rand"]
+        sigma_sw = metrics_main["sigma"]
+        analyzer = metrics_main["analyzer"]
 
-        if len(unique_deg_all) > 1:
-            entropy_deg_norm_global = entropy_deg_global / np.log(len(unique_deg_all))
-        else:
-            entropy_deg_norm_global = 0.0
+        degree_metrics_main = compute_degree_distribution_metrics(degrees)
+
+        unique_deg_all = degree_metrics_main["unique_deg"]
+        counts_all = degree_metrics_main["counts"]
+        pk_all = degree_metrics_main["pk"]
+        entropy_deg_global = degree_metrics_main["entropy_deg"]
+        entropy_deg_norm_global = degree_metrics_main["entropy_deg_norm"]
+
         alpha_powerlaw = None
         xmin_powerlaw = None
         powerlaw_p_result = None
         powerlaw_R_result = None
-   
-        # Clustering
-        try:
-            C = nx.average_clustering(G)
-        except Exception:
-            C = float("nan")
-
-        # Souvislost, průměrná délka cesty, průměr
-        is_conn = nx.is_connected(G) if n_nodes > 0 else False
-        L = None
-        diam = None
-        if is_conn and n_nodes > 1:
-            try:
-                L = nx.average_shortest_path_length(G)
-            except Exception:
-                L = None
-            try:
-                diam = nx.diameter(G)
-            except Exception:
-                diam = None
-
-        # Assortativita stupňů
-        try:
-            assort = nx.degree_assortativity_coefficient(G)
-        except Exception:
-            assort = None
-
-        # Teoretické hodnoty pro náhodný graf G(N, p)
-        L_rand = None
-        C_rand = None
-
-        if n_nodes > 1 and avg_deg > 1:
-            try:
-                L_rand = np.log(n_nodes) / np.log(avg_deg)
-                C_rand = avg_deg / n_nodes
-            except Exception:
-                L_rand = None
-                C_rand = None
-
-        # Small-world analyzer – výpočet σ a interpretace
-        analyzer = SmallWorldAnalyzer(C, L, C_rand, L_rand)
-        sigma_sw = analyzer.sigma
 
         # ====== Konfigurační graf a jeho metriky (počítáme dopředu kvůli klasifikaci) ======
-        G_conf = build_configuration_graph_from_hvg(G, seed=42)
+        G_conf, metrics_conf = compute_configuration_model_metrics(G, seed=42)
 
-        n_nodes_conf = G_conf.number_of_nodes()
-        n_edges_conf = G_conf.number_of_edges()
-        degrees_conf = [d for _, d in G_conf.degree()]
-        avg_deg_conf = float(np.mean(degrees_conf)) if len(degrees_conf) > 0 else 0.0
-
-        try:
-            C_conf = nx.average_clustering(G_conf)
-        except Exception:
-            C_conf = float("nan")
-
-        is_conn_conf = nx.is_connected(G_conf) if n_nodes_conf > 0 else False
-        L_conf = None
-        diam_conf = None
-        if is_conn_conf and n_nodes_conf > 1:
-            try:
-                L_conf = nx.average_shortest_path_length(G_conf)
-            except Exception:
-                L_conf = None
-            try:
-                diam_conf = nx.diameter(G_conf)
-            except Exception:
-                diam_conf = None
-
-        try:
-            assort_conf = nx.degree_assortativity_coefficient(G_conf)
-        except Exception:
-            assort_conf = None
-
-        L_rand_conf = None
-        C_rand_conf = None
-        if n_nodes_conf > 1 and avg_deg_conf > 1:
-            try:
-                L_rand_conf = np.log(n_nodes_conf) / np.log(avg_deg_conf)
-                C_rand_conf = avg_deg_conf / n_nodes_conf
-            except Exception:
-                L_rand_conf = None
-                C_rand_conf = None
-
-        sigma_conf = None
-        if (
-            C_conf is not None
-            and L_conf is not None
-            and L_rand_conf is not None
-            and C_rand_conf not in (None, 0)
-        ):
-            try:
-                sigma_conf = (C_conf / C_rand_conf) / (L_conf / L_rand_conf)
-            except Exception:
-                sigma_conf = None
+        n_nodes_conf = metrics_conf["n_nodes"]
+        n_edges_conf = metrics_conf["n_edges"]
+        degrees_conf = metrics_conf["degrees"]
+        avg_deg_conf = metrics_conf["avg_deg"]
+        C_conf = metrics_conf["C"]
+        L_conf = metrics_conf["L"]
+        diam_conf = metrics_conf["diam"]
+        assort_conf = metrics_conf["assort"]
+        L_rand_conf = metrics_conf["L_rand"]
+        C_rand_conf = metrics_conf["C_rand"]
+        sigma_conf = metrics_conf["sigma"]
+        
         # ====== Rozmístění pro vizualizaci HVG (společné pro vše) ======
         layout_option = st.radio(
             "Rozložení HVG vrcholů",
@@ -1500,16 +1502,9 @@ if analysis_mode == "Časová řada → HVG":
         )
 
         if layout_option == "Síťové (spring layout)":
-            pos = nx.spring_layout(G, seed=42)
-        else:  # "Planární (pokud možné)"
-            try:
-                is_planar, embedding = nx.check_planarity(G)
-                if is_planar:
-                    pos = nx.planar_layout(G)
-                else:
-                    pos = nx.spring_layout(G, seed=42)
-            except Exception:
-                pos = nx.spring_layout(G, seed=42)
+            pos = compute_graph_layout(G, layout_type="spring", seed=42)
+        else:
+            pos = compute_graph_layout(G, layout_type="planar", seed=42)
 
         # Barevné kódování vrcholů (globálně pro HVG vizualizaci)
         color_mode = st.selectbox(
@@ -1840,34 +1835,17 @@ if analysis_mode == "Časová řada → HVG":
 
             # --- Vizualizace konfiguračního grafu ---
             st.subheader("Konfigurační graf (vizualizace)")
-            pos_conf = nx.spring_layout(G_conf, seed=42)
-            edge_x_c, edge_y_c = [], []
-            for u, v in G_conf.edges():
-                x0, y0 = pos_conf[u]
-                x1, y1 = pos_conf[v]
-                edge_x_c += [x0, x1, None]
-                edge_y_c += [y0, y1, None]
+            pos_conf = compute_graph_layout(G_conf, layout_type="spring", seed=42)
 
-            edge_trace_c = go.Scatter(
-                x=edge_x_c,
-                y=edge_y_c,
-                mode="lines",
-                line=dict(width=1, color="#aaa"),
-                hoverinfo="none",
-            )
-
-            node_x_c, node_y_c = [], []
-            for node in G_conf.nodes():
-                x, y = pos_conf[node]
-                node_x_c.append(x)
-                node_y_c.append(y)
-
-            node_trace_c = go.Scatter(
-                x=node_x_c,
-                y=node_y_c,
-                mode="markers",
-                hoverinfo="none",
-                marker=dict(size=8, color="lightgreen", line_width=1),
+            edge_trace_c, node_trace_c = prepare_network_traces(
+                G_conf,
+                pos_conf,
+                node_color="lightgreen",
+                node_size=8,
+                edge_color="#aaa",
+                edge_width=1,
+                show_labels=False,
+                hover_texts=[f"Vrchol: {n}" for n in G_conf.nodes()],
             )
 
             fig_conf = go.Figure(data=[edge_trace_c, node_trace_c])
@@ -2010,35 +1988,15 @@ if analysis_mode == "Časová řada → HVG":
                     st.write(f"- Průměr podgrafu: **{diam_sub}**")
 
                 # vizualizace podgrafu s původním layoutem
-                edge_x_sub, edge_y_sub = [], []
-                for u, v in G_sub.edges():
-                    x0, y0 = pos[u]
-                    x1, y1 = pos[v]
-                    edge_x_sub += [x0, x1, None]
-                    edge_y_sub += [y0, y1, None]
-
-                node_x_sub, node_y_sub = [], []
-                for node in G_sub.nodes():
-                    x, y = pos[node]
-                    node_x_sub.append(x)
-                    node_y_sub.append(y)
-
-                edge_trace_sub = go.Scatter(
-                    x=edge_x_sub,
-                    y=edge_y_sub,
-                    mode="lines",
-                    line=dict(width=1, color="#888"),
-                    hoverinfo="none",
-                )
-                node_trace_sub = go.Scatter(
-                    x=node_x_sub,
-                    y=node_y_sub,
-                    mode="markers+text",
-                    text=[str(n) for n in G_sub.nodes()],
-                    textposition="bottom center",
-                    marker=dict(size=10, color="lightcoral", line_width=1),
-                    hoverinfo="text",
-                    hovertext=[f"Vrchol: {n}" for n in G_sub.nodes()],
+                edge_trace_sub, node_trace_sub = prepare_network_traces(
+                    G_sub,
+                    pos,
+                    node_color="lightcoral",
+                    node_size=10,
+                    edge_color="#888",
+                    edge_width=1,
+                    show_labels=True,
+                    hover_texts=[f"Vrchol: {n}" for n in G_sub.nodes()],
                 )
 
                 fig_sub = go.Figure(data=[edge_trace_sub, node_trace_sub])
@@ -2071,36 +2029,7 @@ if analysis_mode == "Časová řada → HVG":
                 entropy_deg_norm = 0.0
 
             # Slovní klasifikace normalizované entropie
-            if entropy_deg_norm < 0.2:
-                entropy_level = "velmi nízká"
-                entropy_text = (
-                    "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované. "
-                    "Síť působí velmi uspořádaně a strukturálně omezeně."
-                )
-            elif entropy_deg_norm < 0.4:
-                entropy_level = "nízká"
-                entropy_text = (
-                    "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené. "
-                    "Síť vykazuje výraznější pravidelnost a nižší variabilitu."
-                )
-            elif entropy_deg_norm < 0.6:
-                entropy_level = "střední"
-                entropy_text = (
-                    "Stupňové rozdělení je středně rozptýlené. "
-                    "Síť kombinuje určitou pravidelnost i variabilitu."
-                )
-            elif entropy_deg_norm < 0.8:
-                entropy_level = "vysoká"
-                entropy_text = (
-                    "Vrcholy mají rozmanitější stupně a stupňové rozdělení je výrazněji rozptýlené. "
-                    "Síť působí komplexněji a méně pravidelně."
-                )
-            else:
-                entropy_level = "velmi vysoká"
-                entropy_text = (
-                    "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené. "
-                    "Síť vykazuje vysokou variabilitu a vysokou míru strukturální různorodosti."
-                )
+            entropy_level, entropy_text = classify_entropy_level(entropy_deg_norm)
 
             st.subheader("Základní metriky stupňového rozdělení")
 
@@ -2167,16 +2096,10 @@ if analysis_mode == "Časová řada → HVG":
             # Histogram stupňů 1řada
             # =========================
             
-            df_deg = pd.DataFrame({"degree": degs})
-            fig_hist = px.histogram(
-                df_deg,
-                x="degree",
-                nbins=max(degs) + 1,
+            fig_hist = create_degree_histogram_figure(
+                degs,
                 title="Histogram stupňů",
-                labels={"degree": "Stupeň"},
-                opacity=0.7,
             )
-            fig_hist.update_layout(yaxis_title="Počet vrcholů")
             st.plotly_chart(fig_hist, use_container_width=True)
 
           
@@ -2186,22 +2109,11 @@ if analysis_mode == "Časová řada → HVG":
             # =========================
             st.subheader("PDF stupňového rozdělení")
 
-            df_pdf = pd.DataFrame({"degree": unique_deg, "pk": pk})
-
-            fig_pdf = px.line(
-                df_pdf,
-                x="degree",
-                y="pk",
-                markers=True,
+            fig_pdf = create_degree_pdf_figure(
+                unique_deg,
+                pk,
                 title="PDF stupňového rozdělení P(k)",
-                labels={"degree": "Stupeň k", "pk": "P(k)"},
             )
-
-            fig_pdf.update_layout(
-                xaxis_title="Stupeň k",
-                yaxis_title="Pravděpodobnost P(k)",
-            )
-
             st.plotly_chart(fig_pdf, use_container_width=True)
 
             st.caption(
@@ -2216,22 +2128,12 @@ if analysis_mode == "Časová řada → HVG":
             st.subheader("CDF stupňového rozdělení")
 
             cdf_vals = np.cumsum(pk)
-            df_cdf = pd.DataFrame({"degree": unique_deg, "cdf": cdf_vals})
-
-            fig_cdf = px.line(
-                df_cdf,
-                x="degree",
-                y="cdf",
-                markers=True,
+            fig_cdf = create_degree_cdf_figure(
+                unique_deg,
+                cdf_vals,
                 title="CDF stupňového rozdělení F(k)",
-                labels={"degree": "Stupeň k", "cdf": "F(k) = P(K ≤ k)"},
             )
-
-            fig_cdf.update_layout(
-                xaxis_title="Stupeň k",
-                yaxis_title="Kumulativní pravděpodobnost F(k)",
-                yaxis_range=[0, 1.05],
-            )
+            st.plotly_chart(fig_cdf, use_container_width=True)
 
             st.plotly_chart(fig_cdf, use_container_width=True)
 
@@ -2255,133 +2157,106 @@ if analysis_mode == "Časová řada → HVG":
                         "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
                     )
                 else:
-                    degs_for_fit = np.array([d for d in degs if d > 0])
+                    powerlaw_result = compute_powerlaw_fit(degs, has_powerlaw=HAS_POWERLAW)
 
-                    if len(degs_for_fit) < 10:
-                        st.info(
-                            "Graf má příliš málo vrcholů pro smysluplný power-law fit."
-                        )
+                    if not powerlaw_result["success"]:
+                        if powerlaw_result["reason"] == "Příliš málo hodnot pro smysluplný fit.":
+                            st.info("Graf má příliš málo vrcholů pro smysluplný power-law fit.")
+                        else:
+                            st.info(
+                                f"Power-law test se nepodařilo spolehlivě vyhodnotit: {powerlaw_result['reason']}"
+                            )
                     else:
-                        try:
-                            import powerlaw
+                        alpha_powerlaw = powerlaw_result["alpha"]
+                        xmin_powerlaw = powerlaw_result["xmin"]
+                        powerlaw_R_result = powerlaw_result["R"]
+                        powerlaw_p_result = powerlaw_result["p"]
 
-                            fit_global = powerlaw.Fit(
-                                degs_for_fit,
-                                discrete=True,
-                                verbose=False,
-                            )
+                        alpha = alpha_powerlaw
+                        xmin = xmin_powerlaw
+                        R = powerlaw_R_result
+                        p = powerlaw_p_result
 
-                            alpha_powerlaw = fit_global.power_law.alpha
-                            xmin_powerlaw = fit_global.power_law.xmin
+                        st.markdown("**Výsledek power-law analýzy:**")
+                        st.write(f"- Odhadnutý exponent α: **{alpha:.3f}**")
+                        st.write(f"- Odhadnuté k_min: **{xmin}**")
+                        st.write(f"- Likelihood ratio: **R = {R:.3f}**")
+                        st.write(f"- p-hodnota: **p = {p:.3f}**")
 
-                            R_global, p_global = fit_global.distribution_compare(
-                                "power_law", "exponential"
-                            )
-
-                            powerlaw_R_result = R_global
-                            powerlaw_p_result = p_global
-
-                            alpha = alpha_powerlaw
-                            xmin = xmin_powerlaw
-                            R = powerlaw_R_result
-                            p = powerlaw_p_result
-
-                            st.markdown("**Výsledek power-law analýzy:**")
-                            st.write(
-                                f"- Odhadnutý exponent \\(\\alpha\\): **{alpha:.3f}**"
-                            )
-                            st.write(f"- Odhadnuté \\(k_\\min\\): **{xmin}**")
-                            st.write(
-                                f"- Likelihood ratio (power-law vs. exponential): **R = {R:.3f}**"
-                            )
-                            st.write(f"- p-hodnota: **p = {p:.3f}**")
-
-                            if p < 0.1:
-                                if R > 0:
-                                    st.success(
-                                        "Pro daný HVG jsou data **kompatibilní s power-law** "
-                                        "(power-law je statisticky preferovaný oproti exponenciálnímu rozdělení)."
-                                    )
-                                else:
-                                    st.warning(
-                                        "Power-law model je **horší** než exponenciální (R < 0, p < 0.1). "
-                                        "Síť pravděpodobně není scale-free."
-                                    )
-                            else:
-                                st.info(
-                                    "Test je **neprůkazný** (p ≥ 0.1). Nelze spolehlivě říct, že rozdělení je power-law, "
-                                    "ale ani ho jednoznačně vyloučit."
-                                )
-
-                            unique_sorted = np.sort(np.unique(degs_for_fit))
-                            ccdf_vals = np.array(
-                                [
-                                    np.sum(degs_for_fit >= k) / len(degs_for_fit)
-                                    for k in unique_sorted
-                                ]
-                            )
-
-                            mask = unique_sorted >= xmin
-                            if np.sum(mask) >= 2:
-                                k_emp = unique_sorted[mask]
-                                ccdf_emp = ccdf_vals[mask]
-
-                                k_theory = np.linspace(xmin, k_emp.max(), 100)
-                                ccdf_theory = (k_theory / xmin) ** (1 - alpha)
-                                ccdf_theory *= ccdf_emp[0] / ccdf_theory[0]
-
-                                st.subheader("CCDF power-law graf (log–log)")
-
-                                fig_ccdf = go.Figure()
-
-                                fig_ccdf.add_trace(
-                                    go.Scatter(
-                                        x=k_emp,
-                                        y=ccdf_emp,
-                                        mode="markers",
-                                        name="Empirická CCDF",
-                                    )
-                                )
-
-                                fig_ccdf.add_trace(
-                                    go.Scatter(
-                                        x=k_theory,
-                                        y=ccdf_theory,
-                                        mode="lines",
-                                        name=f"Power-law fit (α={alpha:.2f})",
-                                    )
-                                )
-
-                                fig_ccdf.update_layout(
-                                    title="CCDF stupňového rozdělení (empirická vs. power-law fit)",
-                                    xaxis_type="log",
-                                    yaxis_type="log",
-                                    xaxis_title="Stupeň k",
-                                    yaxis_title="P(K ≥ k)",
-                                    legend=dict(x=0.02, y=0.98),
-                                    margin=dict(b=40, l=50, r=10, t=50),
-                                )
-
-                                st.plotly_chart(fig_ccdf, use_container_width=True)
-                                st.caption(
-                                    "Body představují empirickou komplementární distribuční funkci stupňů pro k ≥ k_min, "
-                                    "křivka je teoretický power-law fit. "
-                                    "Pokud se body v tailu (vpravo) přibližně drží křivky, "
-                                    "je chování rozdělení kompatibilní s power-law."
+                        if p < 0.1:
+                            if R > 0:
+                                st.success(
+                                    "Rozdělení je kompatibilní s power-law (lepší než exponenciální)."
                                 )
                             else:
-                                st.info(
-                                    "Tail rozdělení (k ≥ k_min) je příliš krátký na smysluplný CCDF graf."
+                                st.warning(
+                                    "Power-law model je horší než exponenciální rozdělení."
                                 )
+                        else:
+                            st.info(
+                                "Test je neprůkazný – nelze rozhodnout."
+                            )
+
+                        degs_for_fit = powerlaw_result["degrees_for_fit"]
+                        unique_sorted = np.sort(np.unique(degs_for_fit))
+                        ccdf_vals = np.array(
+                            [
+                                np.sum(degs_for_fit >= k) / len(degs_for_fit)
+                                for k in unique_sorted
+                            ]
+                        )
+
+                        mask = unique_sorted >= xmin
+                        if np.sum(mask) >= 2:
+                            k_emp = unique_sorted[mask]
+                            ccdf_emp = ccdf_vals[mask]
+
+                            k_theory = np.linspace(xmin, k_emp.max(), 100)
+                            ccdf_theory = (k_theory / xmin) ** (1 - alpha)
+                            ccdf_theory *= ccdf_emp[0] / ccdf_theory[0]
+
+                            fig_ccdf = go.Figure()
+
+                            fig_ccdf.add_trace(
+                                go.Scatter(
+                                    x=k_emp,
+                                    y=ccdf_emp,
+                                    mode="markers",
+                                    name="Empirická CCDF",
+                                )
+                            )
+
+                            fig_ccdf.add_trace(
+                                go.Scatter(
+                                    x=k_theory,
+                                    y=ccdf_theory,
+                                    mode="lines",
+                                    name=f"Power-law fit (α={alpha:.2f})",
+                                )
+                            )
+
+                            fig_ccdf.update_layout(
+                                title="CCDF (log–log)",
+                                xaxis_type="log",
+                                yaxis_type="log",
+                                xaxis_title="Stupeň k",
+                                yaxis_title="P(K ≥ k)",
+                            )
+
+                            st.plotly_chart(fig_ccdf, use_container_width=True)
+                        else:
+                            st.info(
+                                "Tail je příliš krátký pro CCDF graf."
+                            )
 
                         except Exception as e:
-                            powerlaw_p_result = None
-                            powerlaw_R_result = None
-                            alpha_powerlaw = None
-                            xmin_powerlaw = None
-                            st.info(
-                                f"Power-law test se nepodařilo spolehlivě vyhodnotit: {e}"
-                            )
+                        powerlaw_p_result = None
+                        powerlaw_R_result = None
+                        alpha_powerlaw = None
+                        xmin_powerlaw = None
+                        st.info(
+                            f"Power-law test se nepodařilo spolehlivě vyhodnotit: {e}"
+                        )
 
 
 
@@ -2643,47 +2518,11 @@ if analysis_mode == "Časová řada → HVG":
         # =========================
         if "Arc Diagram HVG" in selected_sections:
             st.subheader("Arc Diagram HVG")
-            n = len(arr)
-            node_x_line = np.arange(n)
-            node_y_line = np.zeros(n)
-            fig_arc = go.Figure()
-
-            for i, j in G.edges():
-                r = (j - i) / 2
-                mid = i + r
-                theta = np.linspace(0, np.pi, 100)
-                x_arc = mid + r * np.cos(theta)
-                y_arc = r * np.sin(theta)
-                fig_arc.add_trace(
-                    go.Scatter(
-                        x=x_arc,
-                        y=y_arc,
-                        mode="lines",
-                        line=dict(color="gray", width=1),
-                        hoverinfo="none",
-                    )
-                )
-
-            fig_arc.add_trace(
-                go.Scatter(
-                    x=node_x_line,
-                    y=node_y_line,
-                    mode="markers",
-                    marker=dict(size=8, color="skyblue"),
-                    hoverinfo="text",
-                    hovertext=[
-                        f"Index: {i}<br>Hodnota: {arr[i]:.3f}" for i in node_x_line
-                    ],
-                )
-            )
-
-            fig_arc.update_layout(
+            fig_arc = create_arc_diagram_figure(
+                G,
+                arr,
                 title="Arc Diagram HVG",
-                showlegend=False,
-                xaxis=dict(showgrid=False, zeroline=False, title="Index"),
-                yaxis=dict(showgrid=False, zeroline=False, visible=False),
-                margin=dict(b=20, l=5, r=5, t=40),
-                height=300,
+                node_color="skyblue",
             )
             st.plotly_chart(fig_arc, use_container_width=True)
 
@@ -2928,14 +2767,13 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         n_edges_c = Gc.number_of_edges()
         degrees_c = [d for _, d in Gc.degree()]
         avg_deg_c = float(np.mean(degrees_c)) if len(degrees_c) > 0 else 0.0
-        unique_deg_c, counts_c = np.unique(degrees_c, return_counts=True) if len(degrees_c) > 0 else (np.array([]), np.array([]))
-        pk_c = counts_c / counts_c.sum() if len(counts_c) > 0 else np.array([])
+        degree_metrics_custom = compute_degree_distribution_metrics(degrees_c)
 
-        entropy_deg_c = -np.sum(pk_c * np.log(pk_c)) if len(pk_c) > 0 else 0.0
-        if len(unique_deg_c) > 1:
-            entropy_deg_norm_c = entropy_deg_c / np.log(len(unique_deg_c))
-        else:
-            entropy_deg_norm_c = 0.0
+        unique_deg_c = degree_metrics_custom["unique_deg"]
+        counts_c = degree_metrics_custom["counts"]
+        pk_c = degree_metrics_custom["pk"]
+        entropy_deg_c = degree_metrics_custom["entropy_deg"]
+        entropy_deg_norm_c = degree_metrics_custom["entropy_deg_norm"]
         # Clustering
         try:
             C_c = nx.average_clustering(Gc)
@@ -2970,60 +2808,22 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         analyzer_c = SmallWorldAnalyzer(C_c, L_c, C_rand_c, L_rand_c)
         sigma_c = analyzer_c.sigma
 
-        # =========================
+                # =========================
         # Konfigurační graf (null model) pro vlastní HVG
         # =========================
-        Gc_conf = build_configuration_graph_from_hvg(Gc, seed=42)
+        Gc_conf, conf_metrics_c = compute_configuration_model_metrics(Gc, seed=42)
 
-        n_nodes_conf_c = Gc_conf.number_of_nodes()
-        n_edges_conf_c = Gc_conf.number_of_edges()
-        degrees_conf_c = [d for _, d in Gc_conf.degree()]
-        avg_deg_conf_c = float(np.mean(degrees_conf_c)) if len(degrees_conf_c) > 0 else 0.0
-
-        try:
-            C_conf_c = nx.average_clustering(Gc_conf)
-        except Exception:
-            C_conf_c = float("nan")
-
-        is_conn_conf_c = nx.is_connected(Gc_conf) if n_nodes_conf_c > 0 else False
-        L_conf_c = None
-        diam_conf_c = None
-        if is_conn_conf_c and n_nodes_conf_c > 1:
-            try:
-                L_conf_c = nx.average_shortest_path_length(Gc_conf)
-            except Exception:
-                L_conf_c = None
-            try:
-                diam_conf_c = nx.diameter(Gc_conf)
-            except Exception:
-                diam_conf_c = None
-
-        try:
-            assort_conf_c = nx.degree_assortativity_coefficient(Gc_conf)
-        except Exception:
-            assort_conf_c = None
-
-        L_rand_conf_c = None
-        C_rand_conf_c = None
-        if n_nodes_conf_c > 1 and avg_deg_conf_c > 1:
-            try:
-                L_rand_conf_c = np.log(n_nodes_conf_c) / np.log(avg_deg_conf_c)
-                C_rand_conf_c = avg_deg_conf_c / n_nodes_conf_c
-            except Exception:
-                L_rand_conf_c = None
-                C_rand_conf_c = None
-
-        sigma_conf_c = None
-        if (
-            C_conf_c is not None
-            and L_conf_c is not None
-            and L_rand_conf_c is not None
-            and C_rand_conf_c not in (None, 0)
-        ):
-            try:
-                sigma_conf_c = (C_conf_c / C_rand_conf_c) / (L_conf_c / L_rand_conf_c)
-            except Exception:
-                sigma_conf_c = None
+        n_nodes_conf_c = conf_metrics_c["n_nodes"]
+        n_edges_conf_c = conf_metrics_c["n_edges"]
+        degrees_conf_c = conf_metrics_c["degrees"]
+        avg_deg_conf_c = conf_metrics_c["avg_deg"]
+        C_conf_c = conf_metrics_c["C"]
+        L_conf_c = conf_metrics_c["L"]
+        diam_conf_c = conf_metrics_c["diam"]
+        assort_conf_c = conf_metrics_c["assort"]
+        L_rand_conf_c = conf_metrics_c["L_rand"]
+        C_rand_conf_c = conf_metrics_c["C_rand"]
+        sigma_conf_c = conf_metrics_c["sigma"]
 
         # =========================
         # Výběr sekcí pro vlastní HVG graf
@@ -3109,39 +2909,17 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         st.subheader("Vizuální zobrazení vlastního grafu")
 
         if n_nodes_c > 0:
-            pos_c = nx.spring_layout(Gc, seed=42)
-            edge_x_c, edge_y_c = [], []
-            for u, v in Gc.edges():
-                x0, y0 = pos_c[u]
-                x1, y1 = pos_c[v]
-                edge_x_c += [x0, x1, None]
-                edge_y_c += [y0, y1, None]
+            pos_c = compute_graph_layout(Gc, layout_type="spring", seed=42)
 
-            edge_trace_c = go.Scatter(
-                x=edge_x_c,
-                y=edge_y_c,
-                mode="lines",
-                line=dict(width=1, color="#888"),
-                hoverinfo="none",
-            )
-
-            node_x_c, node_y_c, node_text_c = [], [], []
-            for node in Gc.nodes():
-                x, y = pos_c[node]
-                node_x_c.append(x)
-                node_y_c.append(y)
-                node_text_c.append(f"Vrchol: {node}<br>Stupeň: {Gc.degree(node)}")
-
-            node_trace_c = go.Scatter(
-                x=node_x_c,
-                y=node_y_c,
-                mode="markers+text",
-                text=[str(n) for n in Gc.nodes()],
-                textposition="bottom center",
-                hoverinfo="text",
-                hovertext=node_text_c,
-                marker=dict(size=10, color="orange", line_width=1),
-                textfont=dict(size=10, color="black"),
+            edge_trace_c, node_trace_c = prepare_network_traces(
+                Gc,
+                pos_c,
+                node_color="orange",
+                node_size=10,
+                edge_color="#888",
+                edge_width=1,
+                show_labels=True,
+                hover_texts=[f"Vrchol: {node}<br>Stupeň: {Gc.degree(node)}" for node in Gc.nodes()],
             )
 
             fig_custom = go.Figure(data=[edge_trace_c, node_trace_c])
@@ -3215,38 +2993,17 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             if diam_sub_c is not None:
                 st.write(f"- Průměr podgrafu: **{diam_sub_c}**")
 
-            pos_sub_c = nx.spring_layout(Gc_sub, seed=42)
+            pos_sub_c = compute_graph_layout(Gc_sub, layout_type="spring", seed=42)
 
-            edge_x_sub_c, edge_y_sub_c = [], []
-            for u, v in Gc_sub.edges():
-                x0, y0 = pos_sub_c[u]
-                x1, y1 = pos_sub_c[v]
-                edge_x_sub_c += [x0, x1, None]
-                edge_y_sub_c += [y0, y1, None]
-
-            node_x_sub_c, node_y_sub_c = [], []
-            for node in Gc_sub.nodes():
-                x, y = pos_sub_c[node]
-                node_x_sub_c.append(x)
-                node_y_sub_c.append(y)
-
-            edge_trace_sub_c = go.Scatter(
-                x=edge_x_sub_c,
-                y=edge_y_sub_c,
-                mode="lines",
-                line=dict(width=1, color="#888"),
-                hoverinfo="none",
-            )
-
-            node_trace_sub_c = go.Scatter(
-                x=node_x_sub_c,
-                y=node_y_sub_c,
-                mode="markers+text",
-                text=[str(n) for n in Gc_sub.nodes()],
-                textposition="bottom center",
-                marker=dict(size=10, color="lightcoral", line_width=1),
-                hoverinfo="text",
-                hovertext=[f"Vrchol: {n}" for n in Gc_sub.nodes()],
+            edge_trace_sub_c, node_trace_sub_c = prepare_network_traces(
+                Gc_sub,
+                pos_sub_c,
+                node_color="lightcoral",
+                node_size=10,
+                edge_color="#888",
+                edge_width=1,
+                show_labels=True,
+                hover_texts=[f"Vrchol: {n}" for n in Gc_sub.nodes()],
             )
 
             fig_sub_c = go.Figure(data=[edge_trace_sub_c, node_trace_sub_c])
@@ -3275,21 +3032,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         else:
             entropy_deg_norm_c = 0.0
 
-        if entropy_deg_norm_c < 0.2:
-            entropy_level_c = "velmi nízká"
-            entropy_text_c = "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované."
-        elif entropy_deg_norm_c < 0.4:
-            entropy_level_c = "nízká"
-            entropy_text_c = "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené."
-        elif entropy_deg_norm_c < 0.6:
-            entropy_level_c = "střední"
-            entropy_text_c = "Stupňové rozdělení je středně rozptýlené."
-        elif entropy_deg_norm_c < 0.8:
-            entropy_level_c = "vysoká"
-            entropy_text_c = "Vrcholy mají rozmanitější stupně a rozdělení je výrazněji rozptýlené."
-        else:
-            entropy_level_c = "velmi vysoká"
-            entropy_text_c = "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené."
+        entropy_level_c, entropy_text_c = classify_entropy_level(entropy_deg_norm_c)
 
         col_deg_c1, col_deg_c2, col_deg_c3, col_deg_c4, col_deg_c5 = st.columns(5)
         with col_deg_c1:
@@ -3309,31 +3052,16 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             f"což odpovídá kategorii **{entropy_level_c}**. {entropy_text_c}"
         )
 
-        df_deg_c = pd.DataFrame({"degree": degs_c})
-        fig_hist_c = px.histogram(
-            df_deg_c,
-            x="degree",
-            nbins=max(degs_c) + 1,
+        fig_hist_c = create_degree_histogram_figure(
+            degs_c,
             title="Histogram stupňů",
-            labels={"degree": "Stupeň"},
-            opacity=0.7,
         )
-        fig_hist_c.update_layout(yaxis_title="Počet vrcholů")
         st.plotly_chart(fig_hist_c, use_container_width=True)
 
-        st.subheader("PDF stupňového rozdělení")
-        df_pdf_c = pd.DataFrame({"degree": unique_deg_c, "pk": pk_c})
-        fig_pdf_c = px.line(
-            df_pdf_c,
-            x="degree",
-            y="pk",
-            markers=True,
+        fig_pdf_c = create_degree_pdf_figure(
+            unique_deg_c,
+            pk_c,
             title="PDF stupňového rozdělení P(k)",
-            labels={"degree": "Stupeň k", "pk": "P(k)"},
-        )
-        fig_pdf_c.update_layout(
-            xaxis_title="Stupeň k",
-            yaxis_title="Pravděpodobnost P(k)",
         )
         st.plotly_chart(fig_pdf_c, use_container_width=True)
 
@@ -3526,35 +3254,17 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             )
 
         st.subheader("Konfigurační graf (vizualizace)")
-        pos_conf_c = nx.spring_layout(Gc_conf, seed=42)
+        pos_conf_c = compute_graph_layout(Gc_conf, layout_type="spring", seed=42)
 
-        edge_x_conf_c, edge_y_conf_c = [], []
-        for u, v in Gc_conf.edges():
-            x0, y0 = pos_conf_c[u]
-            x1, y1 = pos_conf_c[v]
-            edge_x_conf_c += [x0, x1, None]
-            edge_y_conf_c += [y0, y1, None]
-
-        edge_trace_conf_c = go.Scatter(
-            x=edge_x_conf_c,
-            y=edge_y_conf_c,
-            mode="lines",
-            line=dict(width=1, color="#aaa"),
-            hoverinfo="none",
-        )
-
-        node_x_conf_c, node_y_conf_c = [], []
-        for node in Gc_conf.nodes():
-            x, y = pos_conf_c[node]
-            node_x_conf_c.append(x)
-            node_y_conf_c.append(y)
-
-        node_trace_conf_c = go.Scatter(
-            x=node_x_conf_c,
-            y=node_y_conf_c,
-            mode="markers",
-            hoverinfo="none",
-            marker=dict(size=8, color="lightgreen", line_width=1),
+        edge_trace_conf_c, node_trace_conf_c = prepare_network_traces(
+            Gc_conf,
+            pos_conf_c,
+            node_color="lightgreen",
+            node_size=8,
+            edge_color="#aaa",
+            edge_width=1,
+            show_labels=False,
+            hover_texts=[f"Vrchol: {n}" for n in Gc_conf.nodes()],
         )
 
         fig_conf_c = go.Figure(data=[edge_trace_conf_c, node_trace_conf_c])
@@ -3717,88 +3427,45 @@ else:  # "Porovnat dvě časové řady"
 
         # HVG pro sérii 1
         G1 = build_hvg(data1)
-        n1 = G1.number_of_nodes()
-        m1 = G1.number_of_edges()
-        degs1 = [d for _, d in G1.degree()]
-        avg_deg1 = float(np.mean(degs1)) if len(degs1) > 0 else 0.0
-        unique_deg1_main, counts1_main = np.unique(degs1, return_counts=True)
-        pk1_main = counts1_main / counts1_main.sum() if len(counts1_main) > 0 else np.array([])
+        metrics1 = compute_graph_metrics(G1)
 
-        entropy_deg1 = -np.sum(pk1_main * np.log(pk1_main)) if len(pk1_main) > 0 else 0.0
-        if len(unique_deg1_main) > 1:
-            entropy_deg_norm1 = entropy_deg1 / np.log(len(unique_deg1_main))
-        else:
-            entropy_deg_norm1 = 0.0
-        try:
-            C1 = nx.average_clustering(G1)
-        except Exception:
-            C1 = float("nan")
-        is_conn1 = nx.is_connected(G1) if n1 > 0 else False
-        L1 = None
-        diam1 = None
-        if is_conn1 and n1 > 1:
-            try:
-                L1 = nx.average_shortest_path_length(G1)
-            except Exception:
-                L1 = None
-            try:
-                diam1 = nx.diameter(G1)
-            except Exception:
-                diam1 = None
-        L_rand1 = np.log(n1) / np.log(avg_deg1) if n1 > 1 and avg_deg1 > 1 else None
-        C_rand1 = avg_deg1 / n1 if n1 > 0 else None
-        try:
-            assort1 = nx.degree_assortativity_coefficient(G1)
-        except Exception:
-            assort1 = None
+        n1 = metrics1["n_nodes"]
+        m1 = metrics1["n_edges"]
+        degs1 = metrics1["degrees"]
+        avg_deg1 = metrics1["avg_deg"]
+        C1 = metrics1["C"]
+        L1 = metrics1["L"]
+        diam1 = metrics1["diam"]
+        assort1 = metrics1["assort"]
+        L_rand1 = metrics1["L_rand"]
+        C_rand1 = metrics1["C_rand"]
+        sigma1 = metrics1["sigma"]
+
+        degree_metrics_1 = compute_degree_distribution_metrics(degs1)
+
+        unique_deg1_main = degree_metrics_1["unique_deg"]
+        counts1_main = degree_metrics_1["counts"]
+        pk1_main = degree_metrics_1["pk"]
+        entropy_deg1 = degree_metrics_1["entropy_deg"]
+        entropy_deg_norm1 = degree_metrics_1["entropy_deg_norm"]
+
         analyzer1 = SmallWorldAnalyzer(C1, L1, C_rand1, L_rand1)
-        sigma1 = analyzer1.sigma
         powerlaw_p_result_1 = None
         powerlaw_R_result_1 = None
         G1_conf = build_configuration_graph_from_hvg(G1, seed=42)
-        n1c = G1_conf.number_of_nodes()
-        m1c = G1_conf.number_of_edges()
-        degs1c = [d for _, d in G1_conf.degree()]
-        avg_deg1c = float(np.mean(degs1c)) if len(degs1c) > 0 else 0.0
+        metrics1c = compute_graph_metrics(G1_conf)
 
-        try:
-            C1c = nx.average_clustering(G1_conf)
-        except Exception:
-            C1c = float("nan")
-
-        is_conn1c = nx.is_connected(G1_conf) if n1c > 0 else False
-        L1c = None
-        diam1c = None
-        if is_conn1c and n1c > 1:
-            try:
-                L1c = nx.average_shortest_path_length(G1_conf)
-            except Exception:
-                L1c = None
-            try:
-                diam1c = nx.diameter(G1_conf)
-            except Exception:
-                diam1c = None
-
-        L_rand1c = None
-        C_rand1c = None
-        if n1c > 1 and avg_deg1c > 1:
-            try:
-                L_rand1c = np.log(n1c) / np.log(avg_deg1c)
-                C_rand1c = avg_deg1c / n1c
-            except Exception:
-                L_rand1c, C_rand1c = None, None
-
-        sigma1c = None
-        if (
-            C1c is not None
-            and L1c is not None
-            and L_rand1c is not None
-            and C_rand1c not in (None, 0)
-        ):
-            try:
-                sigma1c = (C1c / C_rand1c) / (L1c / L_rand1c)
-            except Exception:
-                sigma1c = None        
+        n1c = metrics1c["n_nodes"]
+        m1c = metrics1c["n_edges"]
+        degs1c = metrics1c["degrees"]
+        avg_deg1c = metrics1c["avg_deg"]
+        C1c = metrics1c["C"]
+        L1c = metrics1c["L"]
+        diam1c = metrics1c["diam"]
+        assort1c = metrics1c["assort"]
+        L_rand1c = metrics1c["L_rand"]
+        C_rand1c = metrics1c["C_rand"]
+        sigma1c = metrics1c["sigma"]        
         # =============================
         # =============================
         # Sidebar – nastavení série 2
@@ -4276,93 +3943,44 @@ else:  # "Porovnat dvě časové řady"
             )
         else:
             G2 = build_hvg(data2)
-            n2 = G2.number_of_nodes()
-            m2 = G2.number_of_edges()
-            degs2 = [d for _, d in G2.degree()]
-            avg_deg2 = float(np.mean(degs2)) if len(degs2) > 0 else 0.0
-            unique_deg2_main, counts2_main = np.unique(degs2, return_counts=True)
-            pk2_main = counts2_main / counts2_main.sum() if len(counts2_main) > 0 else np.array([])
+            metrics2 = compute_graph_metrics(G2)
 
-            entropy_deg2 = -np.sum(pk2_main * np.log(pk2_main)) if len(pk2_main) > 0 else 0.0
-            if len(unique_deg2_main) > 1:
-                entropy_deg_norm2 = entropy_deg2 / np.log(len(unique_deg2_main))
-            else:
-                entropy_deg_norm2 = 0.0
+            n2 = metrics2["n_nodes"]
+            m2 = metrics2["n_edges"]
+            degs2 = metrics2["degrees"]
+            avg_deg2 = metrics2["avg_deg"]
+            degree_metrics_2 = compute_degree_distribution_metrics(degs2)
 
-            try:
-                C2 = nx.average_clustering(G2)
-            except Exception:
-                C2 = float("nan")
-
-            is_conn2 = nx.is_connected(G2) if n2 > 0 else False
-            L2 = None
-            diam2 = None
-            if is_conn2 and n2 > 1:
-                try:
-                    L2 = nx.average_shortest_path_length(G2)
-                except Exception:
-                    L2 = None
-                try:
-                    diam2 = nx.diameter(G2)
-                except Exception:
-                    diam2 = None
-
-            L_rand2 = np.log(n2) / np.log(avg_deg2) if n2 > 1 and avg_deg2 > 1 else None
-            C_rand2 = avg_deg2 / n2 if n2 > 0 else None
-
-            try:
-                assort2 = nx.degree_assortativity_coefficient(G2)
-            except Exception:
-                assort2 = None
+            unique_deg2_main = degree_metrics_2["unique_deg"]
+            counts2_main = degree_metrics_2["counts"]
+            pk2_main = degree_metrics_2["pk"]
+            entropy_deg2 = degree_metrics_2["entropy_deg"]
+            entropy_deg_norm2 = degree_metrics_2["entropy_deg_norm"]
+            C2 = metrics2["C"]
+            L2 = metrics2["L"]
+            diam2 = metrics2["diam"]
+            assort2 = metrics2["assort"]
+            L_rand2 = metrics2["L_rand"]
+            C_rand2 = metrics2["C_rand"]
+            sigma2 = metrics2["sigma"]
 
             analyzer2 = SmallWorldAnalyzer(C2, L2, C_rand2, L_rand2)
-            sigma2 = analyzer2.sigma
+
             powerlaw_p_result_2 = None
             powerlaw_R_result_2 = None
-            G2_conf = build_configuration_graph_from_hvg(G2, seed=42)
-            n2c = G2_conf.number_of_nodes()
-            m2c = G2_conf.number_of_edges()
-            degs2c = [d for _, d in G2_conf.degree()]
-            avg_deg2c = float(np.mean(degs2c)) if len(degs2c) > 0 else 0.0
+            G2_conf, conf_metrics2 = compute_configuration_model_metrics(G2, seed=42)
 
-            try:
-                C2c = nx.average_clustering(G2_conf)
-            except Exception:
-                C2c = float("nan")
-
-            is_conn2c = nx.is_connected(G2_conf) if n2c > 0 else False
-            L2c = None
-            diam2c = None
-            if is_conn2c and n2c > 1:
-                try:
-                    L2c = nx.average_shortest_path_length(G2_conf)
-                except Exception:
-                    L2c = None
-                try:
-                    diam2c = nx.diameter(G2_conf)
-                except Exception:
-                    diam2c = None
-
-            L_rand2c = None
-            C_rand2c = None
-            if n2c > 1 and avg_deg2c > 1:
-                try:
-                    L_rand2c = np.log(n2c) / np.log(avg_deg2c)
-                    C_rand2c = avg_deg2c / n2c
-                except Exception:
-                    L_rand2c, C_rand2c = None, None
-
-            sigma2c = None
-            if (
-                C2c is not None
-                and L2c is not None
-                and L_rand2c is not None
-                and C_rand2c not in (None, 0)
-            ):
-                try:
-                    sigma2c = (C2c / C_rand2c) / (L2c / L_rand2c)
-                except Exception:
-                    sigma2c = None
+            n2c = conf_metrics2["n_nodes"]
+            m2c = conf_metrics2["n_edges"]
+            degs2c = conf_metrics2["degrees"]
+            avg_deg2c = conf_metrics2["avg_deg"]
+            C2c = conf_metrics2["C"]
+            L2c = conf_metrics2["L"]
+            diam2c = conf_metrics2["diam"]
+            assort2c = conf_metrics2["assort"]
+            L_rand2c = conf_metrics2["L_rand"]
+            C_rand2c = conf_metrics2["C_rand"]
+            sigma2c = conf_metrics2["sigma"]
             # =============================
             # Časové řady série 1 a 2 hned pod jejich nadpisy
             # =============================
@@ -4480,31 +4098,17 @@ else:  # "Porovnat dvě časové řady"
 
             col_g1, col_g2 = st.columns(2)
             with col_g1:
-                pos1 = nx.spring_layout(G1, seed=42)
-                edge_x1, edge_y1 = [], []
-                for u, v in G1.edges():
-                    x0, y0 = pos1[u]
-                    x1_, y1_ = pos1[v]
-                    edge_x1 += [x0, x1_, None]
-                    edge_y1 += [y0, y1_, None]
-                edge_trace1 = go.Scatter(
-                    x=edge_x1,
-                    y=edge_y1,
-                    mode="lines",
-                    line=dict(width=1, color="#888"),
-                    hoverinfo="none",
-                )
-                node_x1, node_y1 = [], []
-                for node in G1.nodes():
-                    x, y = pos1[node]
-                    node_x1.append(x)
-                    node_y1.append(y)
-                node_trace1 = go.Scatter(
-                    x=node_x1,
-                    y=node_y1,
-                    mode="markers",
-                    marker=dict(size=10, color="skyblue"),
-                    hoverinfo="none",
+                pos1 = compute_graph_layout(G1, layout_type="spring", seed=42)
+
+                edge_trace1, node_trace1 = prepare_network_traces(
+                    G1,
+                    pos1,
+                    node_color="skyblue",
+                    node_size=10,
+                    edge_color="#888",
+                    edge_width=1,
+                    show_labels=False,
+                    hover_texts=[f"Vrchol: {n}" for n in G1.nodes()],
                 )
                 fig_g1 = go.Figure(data=[edge_trace1, node_trace1])
                 fig_g1.update_layout(
@@ -4516,31 +4120,17 @@ else:  # "Porovnat dvě časové řady"
                 st.plotly_chart(fig_g1, use_container_width=True)
 
             with col_g2:
-                pos2 = nx.spring_layout(G2, seed=42)
-                edge_x2, edge_y2 = [], []
-                for u, v in G2.edges():
-                    x0, y0 = pos2[u]
-                    x2_, y2_ = pos2[v]
-                    edge_x2 += [x0, x2_, None]
-                    edge_y2 += [y0, y2_, None]
-                edge_trace2 = go.Scatter(
-                    x=edge_x2,
-                    y=edge_y2,
-                    mode="lines",
-                    line=dict(width=1, color="#888"),
-                    hoverinfo="none",
-                )
-                node_x2, node_y2 = [], []
-                for node in G2.nodes():
-                    x, y = pos2[node]
-                    node_x2.append(x)
-                    node_y2.append(y)
-                node_trace2 = go.Scatter(
-                    x=node_x2,
-                    y=node_y2,
-                    mode="markers",
-                    marker=dict(size=10, color="lightgreen"),
-                    hoverinfo="none",
+                pos2 = compute_graph_layout(G2, layout_type="spring", seed=42)
+
+                edge_trace2, node_trace2 = prepare_network_traces(
+                    G2,
+                    pos2,
+                    node_color="lightgreen",
+                    node_size=10,
+                    edge_color="#888",
+                    edge_width=1,
+                    show_labels=False,
+                    hover_texts=[f"Vrchol: {n}" for n in G2.nodes()],
                 )
                 fig_g2 = go.Figure(data=[edge_trace2, node_trace2])
                 fig_g2.update_layout(
@@ -5048,33 +4638,15 @@ else:  # "Porovnat dvě časové řady"
                             st.write(f"- Průměr grafu: **{diam1_sub}**")
 
                         # vizualizace s původním layoutem pos1
-                        edge_x1_sub, edge_y1_sub = [], []
-                        for u, v in G1_sub.edges():
-                            x0, y0 = pos1[u]
-                            x1_, y1_ = pos1[v]
-                            edge_x1_sub += [x0, x1_, None]
-                            edge_y1_sub += [y0, y1_, None]
-                        node_x1_sub, node_y1_sub = [], []
-                        for node in G1_sub.nodes():
-                            x, y = pos1[node]
-                            node_x1_sub.append(x)
-                            node_y1_sub.append(y)
-                        edge_trace1_sub = go.Scatter(
-                            x=edge_x1_sub,
-                            y=edge_y1_sub,
-                            mode="lines",
-                            line=dict(width=1, color="#888"),
-                            hoverinfo="none",
-                        )
-                        node_trace1_sub = go.Scatter(
-                            x=node_x1_sub,
-                            y=node_y1_sub,
-                            mode="markers+text",
-                            text=[str(n) for n in G1_sub.nodes()],
-                            textposition="bottom center",
-                            marker=dict(size=10, color="lightcoral", line_width=1),
-                            hoverinfo="text",
-                            hovertext=[f"Vrchol: {n}" for n in G1_sub.nodes()],
+                        edge_trace1_sub, node_trace1_sub = prepare_network_traces(
+                            G1_sub,
+                            pos1,
+                            node_color="lightcoral",
+                            node_size=10,
+                            edge_color="#888",
+                            edge_width=1,
+                            show_labels=True,
+                            hover_texts=[f"Vrchol: {n}" for n in G1_sub.nodes()],
                         )
                         fig1_sub = go.Figure(data=[edge_trace1_sub, node_trace1_sub])
                         fig1_sub.update_layout(
@@ -5125,33 +4697,15 @@ else:  # "Porovnat dvě časové řady"
                         if diam2_sub is not None:
                             st.write(f"- Průměr grafu: **{diam2_sub}**")
 
-                        edge_x2_sub, edge_y2_sub = [], []
-                        for u, v in G2_sub.edges():
-                            x0, y0 = pos2[u]
-                            x2_, y2_ = pos2[v]
-                            edge_x2_sub += [x0, x2_, None]
-                            edge_y2_sub += [y0, y2_, None]
-                        node_x2_sub, node_y2_sub = [], []
-                        for node in G2_sub.nodes():
-                            x, y = pos2[node]
-                            node_x2_sub.append(x)
-                            node_y2_sub.append(y)
-                        edge_trace2_sub = go.Scatter(
-                            x=edge_x2_sub,
-                            y=edge_y2_sub,
-                            mode="lines",
-                            line=dict(width=1, color="#888"),
-                            hoverinfo="none",
-                        )
-                        node_trace2_sub = go.Scatter(
-                            x=node_x2_sub,
-                            y=node_y2_sub,
-                            mode="markers+text",
-                            text=[str(n) for n in G2_sub.nodes()],
-                            textposition="bottom center",
-                            marker=dict(size=10, color="lightcoral", line_width=1),
-                            hoverinfo="text",
-                            hovertext=[f"Vrchol: {n}" for n in G2_sub.nodes()],
+                        edge_trace2_sub, node_trace2_sub = prepare_network_traces(
+                            G2_sub,
+                            pos2,
+                            node_color="lightcoral",
+                            node_size=10,
+                            edge_color="#888",
+                            edge_width=1,
+                            show_labels=True,
+                            hover_texts=[f"Vrchol: {n}" for n in G2_sub.nodes()],
                         )
                         fig2_sub = go.Figure(data=[edge_trace2_sub, node_trace2_sub])
                         fig2_sub.update_layout(
@@ -5195,31 +4749,17 @@ else:  # "Porovnat dvě časové řady"
                     if sigma1c is not None and not np.isnan(sigma1c):
                         st.write(f"- Small-world index σ_conf: **{sigma1c:.2f}**")
 
-                    pos1c = nx.spring_layout(G1_conf, seed=42)
-                    edge_x1c, edge_y1c = [], []
-                    for u, v in G1_conf.edges():
-                        x0, y0 = pos1c[u]
-                        x1_, y1_ = pos1c[v]
-                        edge_x1c += [x0, x1_, None]
-                        edge_y1c += [y0, y1_, None]
-                    edge_trace1c = go.Scatter(
-                        x=edge_x1c,
-                        y=edge_y1c,
-                        mode="lines",
-                        line=dict(width=1, color="#aaa"),
-                        hoverinfo="none",
-                    )
-                    node_x1c, node_y1c = [], []
-                    for node in G1_conf.nodes():
-                        x, y = pos1c[node]
-                        node_x1c.append(x)
-                        node_y1c.append(y)
-                    node_trace1c = go.Scatter(
-                        x=node_x1c,
-                        y=node_y1c,
-                        mode="markers",
-                        marker=dict(size=8, color="lightgreen"),
-                        hoverinfo="none",
+                    pos1c = compute_graph_layout(G1_conf, layout_type="spring", seed=42)
+
+                    edge_trace1c, node_trace1c = prepare_network_traces(
+                        G1_conf,
+                        pos1c,
+                        node_color="lightgreen",
+                        node_size=8,
+                        edge_color="#aaa",
+                        edge_width=1,
+                        show_labels=False,
+                        hover_texts=[f"Vrchol: {n}" for n in G1_conf.nodes()],
                     )
                     fig_conf1 = go.Figure(data=[edge_trace1c, node_trace1c])
                     fig_conf1.update_layout(
@@ -5255,31 +4795,17 @@ else:  # "Porovnat dvě časové řady"
                     if sigma2c is not None and not np.isnan(sigma2c):
                         st.write(f"- Small-world index σ_conf: **{sigma2c:.2f}**")
 
-                    pos2c = nx.spring_layout(G2_conf, seed=42)
-                    edge_x2c, edge_y2c = [], []
-                    for u, v in G2_conf.edges():
-                        x0, y0 = pos2c[u]
-                        x2_, y2_ = pos2c[v]
-                        edge_x2c += [x0, x2_, None]
-                        edge_y2c += [y0, y2_, None]
-                    edge_trace2c = go.Scatter(
-                        x=edge_x2c,
-                        y=edge_y2c,
-                        mode="lines",
-                        line=dict(width=1, color="#aaa"),
-                        hoverinfo="none",
-                    )
-                    node_x2c, node_y2c = [], []
-                    for node in G2_conf.nodes():
-                        x, y = pos2c[node]
-                        node_x2c.append(x)
-                        node_y2c.append(y)
-                    node_trace2c = go.Scatter(
-                        x=node_x2c,
-                        y=node_y2c,
-                        mode="markers",
-                        marker=dict(size=8, color="lightgreen"),
-                        hoverinfo="none",
+                    pos2c = compute_graph_layout(G2_conf, layout_type="spring", seed=42)
+
+                    edge_trace2c, node_trace2c = prepare_network_traces(
+                        G2_conf,
+                        pos2c,
+                        node_color="lightgreen",
+                        node_size=8,
+                        edge_color="#aaa",
+                        edge_width=1,
+                        show_labels=False,
+                        hover_texts=[f"Vrchol: {n}" for n in G2_conf.nodes()],
                     )
                     fig_conf2 = go.Figure(data=[edge_trace2c, node_trace2c])
                     fig_conf2.update_layout(
@@ -5310,31 +4836,7 @@ else:  # "Porovnat dvě časové řady"
                 else:
                     entropy_deg_norm1 = 0.0
 
-                if entropy_deg_norm1 < 0.2:
-                    entropy_level1 = "velmi nízká"
-                    entropy_text1 = (
-                        "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované."
-                    )
-                elif entropy_deg_norm1 < 0.4:
-                    entropy_level1 = "nízká"
-                    entropy_text1 = (
-                        "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené."
-                    )
-                elif entropy_deg_norm1 < 0.6:
-                    entropy_level1 = "střední"
-                    entropy_text1 = (
-                        "Stupňové rozdělení je středně rozptýlené."
-                    )
-                elif entropy_deg_norm1 < 0.8:
-                    entropy_level1 = "vysoká"
-                    entropy_text1 = (
-                        "Vrcholy mají rozmanitější stupně a rozdělení je výrazněji rozptýlené."
-                    )
-                else:
-                    entropy_level1 = "velmi vysoká"
-                    entropy_text1 = (
-                        "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené."
-                    )
+                entropy_level1, entropy_text1 = classify_entropy_level(entropy_deg_norm1)
 
                 # -----------------------------
                 # Série 2 – stupňové rozdělení
@@ -5349,31 +4851,7 @@ else:  # "Porovnat dvě časové řady"
                 else:
                     entropy_deg_norm2 = 0.0
 
-                if entropy_deg_norm2 < 0.2:
-                    entropy_level2 = "velmi nízká"
-                    entropy_text2 = (
-                        "Vrcholy mají velmi podobné stupně a stupňové rozdělení je silně koncentrované."
-                    )
-                elif entropy_deg_norm2 < 0.4:
-                    entropy_level2 = "nízká"
-                    entropy_text2 = (
-                        "Vrcholy mají spíše podobné stupně a rozdělení není příliš rozptýlené."
-                    )
-                elif entropy_deg_norm2 < 0.6:
-                    entropy_level2 = "střední"
-                    entropy_text2 = (
-                        "Stupňové rozdělení je středně rozptýlené."
-                    )
-                elif entropy_deg_norm2 < 0.8:
-                    entropy_level2 = "vysoká"
-                    entropy_text2 = (
-                        "Vrcholy mají rozmanitější stupně a rozdělení je výrazněji rozptýlené."
-                    )
-                else:
-                    entropy_level2 = "velmi vysoká"
-                    entropy_text2 = (
-                        "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené."
-                    )
+                entropy_level2, entropy_text2 = classify_entropy_level(entropy_deg_norm2)
 
 
             
@@ -5496,7 +4974,7 @@ else:  # "Porovnat dvě časové řady"
                 fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
                 st.plotly_chart(fig_deg_cmp, use_container_width=True)
 
-                            # -----------------------------
+                # -----------------------------
                 # PDF stupňového rozdělení – obě série
                 # -----------------------------
                 st.markdown("#### PDF stupňového rozdělení")
@@ -5504,34 +4982,18 @@ else:  # "Porovnat dvě časové řady"
                 col_pdf1, col_pdf2 = st.columns(2)
 
                 with col_pdf1:
-                    df_pdf1 = pd.DataFrame({"degree": unique_deg1, "pk": pk1})
-                    fig_pdf1 = px.line(
-                        df_pdf1,
-                        x="degree",
-                        y="pk",
-                        markers=True,
+                    fig_pdf1 = create_degree_pdf_figure(
+                        unique_deg1,
+                        pk1,
                         title="Série 1 – PDF P(k)",
-                        labels={"degree": "Stupeň k", "pk": "P(k)"},
-                    )
-                    fig_pdf1.update_layout(
-                        xaxis_title="Stupeň k",
-                        yaxis_title="Pravděpodobnost P(k)",
                     )
                     st.plotly_chart(fig_pdf1, use_container_width=True)
 
                 with col_pdf2:
-                    df_pdf2 = pd.DataFrame({"degree": unique_deg2, "pk": pk2})
-                    fig_pdf2 = px.line(
-                        df_pdf2,
-                        x="degree",
-                        y="pk",
-                        markers=True,
+                    fig_pdf2 = create_degree_pdf_figure(
+                        unique_deg2,
+                        pk2,
                         title="Série 2 – PDF P(k)",
-                        labels={"degree": "Stupeň k", "pk": "P(k)"},
-                    )
-                    fig_pdf2.update_layout(
-                        xaxis_title="Stupeň k",
-                        yaxis_title="Pravděpodobnost P(k)",
                     )
                     st.plotly_chart(fig_pdf2, use_container_width=True)
 
@@ -5550,34 +5012,18 @@ else:  # "Porovnat dvě časové řady"
                 col_cdf1, col_cdf2 = st.columns(2)
 
                 with col_cdf1:
-                    df_cdf1 = pd.DataFrame({"degree": unique_deg1, "cdf": cdf1})
-                    fig_cdf1 = px.line(
-                        df_cdf1,
-                        x="degree",
-                        y="cdf",
-                        markers=True,
+                    fig_cdf1 = create_degree_cdf_figure(
+                        unique_deg1,
+                        cdf1,
                         title="Série 1 – CDF F(k)",
-                        labels={"degree": "Stupeň k", "cdf": "F(k)"},
-                    )
-                    fig_cdf1.update_layout(
-                        xaxis_title="Stupeň k",
-                        yaxis_title="Kumulativní pravděpodobnost F(k)",
                     )
                     st.plotly_chart(fig_cdf1, use_container_width=True)
 
                 with col_cdf2:
-                    df_cdf2 = pd.DataFrame({"degree": unique_deg2, "cdf": cdf2})
-                    fig_cdf2 = px.line(
-                        df_cdf2,
-                        x="degree",
-                        y="cdf",
-                        markers=True,
+                    fig_cdf2 = create_degree_cdf_figure(
+                        unique_deg2,
+                        cdf2,
                         title="Série 2 – CDF F(k)",
-                        labels={"degree": "Stupeň k", "cdf": "F(k)"},
-                    )
-                    fig_cdf2.update_layout(
-                        xaxis_title="Stupeň k",
-                        yaxis_title="Kumulativní pravděpodobnost F(k)",
                     )
                     st.plotly_chart(fig_cdf2, use_container_width=True)
 
@@ -5585,7 +5031,7 @@ else:  # "Porovnat dvě časové řady"
                     "CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů."
                 )
 
-                                # -----------------------------
+                # -----------------------------
                 # Formální power-law test + CCDF
                 # -----------------------------
                 st.markdown("#### Formální power-law test + CCDF")
@@ -5598,55 +5044,8 @@ else:  # "Porovnat dvě časové řady"
                 alpha2 = None
                 xmin1 = None
                 xmin2 = None
-
-                if do_powerlaw_cmp and HAS_POWERLAW:
-                    try:
-                        import powerlaw
-
-                        degs1_for_fit_pre = np.array([d for d in degs1 if d > 0])
-                        if len(degs1_for_fit_pre) >= 10:
-                            fit1_pre = powerlaw.Fit(
-                                degs1_for_fit_pre,
-                                discrete=True,
-                                verbose=False,
-                            )
-                            alpha1 = fit1_pre.power_law.alpha
-                            xmin1 = fit1_pre.power_law.xmin
-                            R1_pre, p1_pre = fit1_pre.distribution_compare(
-                                "power_law", "exponential"
-                            )
-                            powerlaw_R_result_1 = R1_pre
-                            powerlaw_p_result_1 = p1_pre
-
-                        degs2_for_fit_pre = np.array([d for d in degs2 if d > 0])
-                        if len(degs2_for_fit_pre) >= 10:
-                            fit2_pre = powerlaw.Fit(
-                                degs2_for_fit_pre,
-                                discrete=True,
-                                verbose=False,
-                            )
-                            alpha2 = fit2_pre.power_law.alpha
-                            xmin2 = fit2_pre.power_law.xmin
-                            R2_pre, p2_pre = fit2_pre.distribution_compare(
-                                "power_law", "exponential"
-                            )
-                            powerlaw_R_result_2 = R2_pre
-                            powerlaw_p_result_2 = p2_pre
-
-                    except Exception:
-                        powerlaw_R_result_1 = None
-                        powerlaw_p_result_1 = None
-                        powerlaw_R_result_2 = None
-                        powerlaw_p_result_2 = None
-                        alpha1 = None
-                        alpha2 = None
-                        xmin1 = None
-                        xmin2 = None
-
-
-
-
-
+                result_text_1 = None
+                result_text_2 = None
 
                 if do_powerlaw_cmp:
                     if not HAS_POWERLAW:
@@ -5655,38 +5054,36 @@ else:  # "Porovnat dvě časové řady"
                             "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
                         )
                     else:
-                        import powerlaw
+                        result1 = compute_powerlaw_fit(degs1, has_powerlaw=HAS_POWERLAW)
+                        result2 = compute_powerlaw_fit(degs2, has_powerlaw=HAS_POWERLAW)
 
                         col_pl1, col_pl2 = st.columns(2)
-
-                        result_text_1 = None
-                        result_text_2 = None
-
 
                         with col_pl1:
                             st.markdown("**Série 1 – power-law analýza**")
 
-                            degs1_for_fit = np.array([d for d in degs1 if d > 0])
-
-                            if len(degs1_for_fit) < 10:
-                                st.info(
-                                    "Série 1 má příliš málo vrcholů pro smysluplný power-law fit."
-                                )
-                            elif powerlaw_p_result_1 is None or powerlaw_R_result_1 is None or alpha1 is None or xmin1 is None:
-                                st.info(
-                                    "Power-law test pro Sérii 1 se nepodařilo spolehlivě vyhodnotit."
-                                )
+                            if not result1["success"]:
+                                if result1["reason"] == "Příliš málo hodnot pro smysluplný fit.":
+                                    st.info(
+                                        "Série 1 má příliš málo vrcholů pro smysluplný power-law fit."
+                                    )
+                                else:
+                                    st.info(
+                                        f"Power-law test pro Sérii 1 se nepodařilo spolehlivě vyhodnotit: {result1['reason']}"
+                                    )
                             else:
-                                R1 = powerlaw_R_result_1
-                                p1 = powerlaw_p_result_1
+                                alpha1 = result1["alpha"]
+                                xmin1 = result1["xmin"]
+                                powerlaw_R_result_1 = result1["R"]
+                                powerlaw_p_result_1 = result1["p"]
 
                                 st.write(f"- Odhadnutý exponent α: **{alpha1:.3f}**")
                                 st.write(f"- Odhadnuté k_min: **{xmin1}**")
-                                st.write(f"- Likelihood ratio R: **{R1:.3f}**")
-                                st.write(f"- p-hodnota: **{p1:.3f}**")
+                                st.write(f"- Likelihood ratio R: **{powerlaw_R_result_1:.3f}**")
+                                st.write(f"- p-hodnota: **{powerlaw_p_result_1:.3f}**")
 
-                                if p1 < 0.1:
-                                    if R1 > 0:
+                                if powerlaw_p_result_1 < 0.1:
+                                    if powerlaw_R_result_1 > 0:
                                         result_text_1 = "kompatibilní s power-law"
                                         st.success(
                                             "Rozdělení je kompatibilní s power-law a power-law je preferovaný oproti exponenciálnímu rozdělení."
@@ -5698,10 +5095,9 @@ else:  # "Porovnat dvě časové řady"
                                         )
                                 else:
                                     result_text_1 = "neprůkazné"
-                                    st.info(
-                                        "Test je neprůkazný. Nelze spolehlivě rozhodnout."
-                                    )
+                                    st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
 
+                                degs1_for_fit = result1["degrees_for_fit"]
                                 unique_sorted1 = np.sort(np.unique(degs1_for_fit))
                                 ccdf_vals1 = np.array(
                                     [
@@ -5751,31 +5147,31 @@ else:  # "Porovnat dvě časové řady"
                                         "Tail rozdělení Série 1 je příliš krátký na smysluplný CCDF graf."
                                     )
 
-
                         with col_pl2:
                             st.markdown("**Série 2 – power-law analýza**")
 
-                            degs2_for_fit = np.array([d for d in degs2 if d > 0])
-
-                            if len(degs2_for_fit) < 10:
-                                st.info(
-                                    "Série 2 má příliš málo vrcholů pro smysluplný power-law fit."
-                                )
-                            elif powerlaw_p_result_2 is None or powerlaw_R_result_2 is None or alpha2 is None or xmin2 is None:
-                                st.info(
-                                    "Power-law test pro Sérii 2 se nepodařilo spolehlivě vyhodnotit."
-                                )
+                            if not result2["success"]:
+                                if result2["reason"] == "Příliš málo hodnot pro smysluplný fit.":
+                                    st.info(
+                                        "Série 2 má příliš málo vrcholů pro smysluplný power-law fit."
+                                    )
+                                else:
+                                    st.info(
+                                        f"Power-law test pro Sérii 2 se nepodařilo spolehlivě vyhodnotit: {result2['reason']}"
+                                    )
                             else:
-                                R2 = powerlaw_R_result_2
-                                p2 = powerlaw_p_result_2
+                                alpha2 = result2["alpha"]
+                                xmin2 = result2["xmin"]
+                                powerlaw_R_result_2 = result2["R"]
+                                powerlaw_p_result_2 = result2["p"]
 
                                 st.write(f"- Odhadnutý exponent α: **{alpha2:.3f}**")
                                 st.write(f"- Odhadnuté k_min: **{xmin2}**")
-                                st.write(f"- Likelihood ratio R: **{R2:.3f}**")
-                                st.write(f"- p-hodnota: **{p2:.3f}**")
+                                st.write(f"- Likelihood ratio R: **{powerlaw_R_result_2:.3f}**")
+                                st.write(f"- p-hodnota: **{powerlaw_p_result_2:.3f}**")
 
-                                if p2 < 0.1:
-                                    if R2 > 0:
+                                if powerlaw_p_result_2 < 0.1:
+                                    if powerlaw_R_result_2 > 0:
                                         result_text_2 = "kompatibilní s power-law"
                                         st.success(
                                             "Rozdělení je kompatibilní s power-law a power-law je preferovaný oproti exponenciálnímu rozdělení."
@@ -5787,10 +5183,9 @@ else:  # "Porovnat dvě časové řady"
                                         )
                                 else:
                                     result_text_2 = "neprůkazné"
-                                    st.info(
-                                        "Test je neprůkazný. Nelze spolehlivě rozhodnout."
-                                    )
+                                    st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
 
+                                degs2_for_fit = result2["degrees_for_fit"]
                                 unique_sorted2 = np.sort(np.unique(degs2_for_fit))
                                 ccdf_vals2 = np.array(
                                     [
@@ -5840,9 +5235,6 @@ else:  # "Porovnat dvě časové řady"
                                         "Tail rozdělení Série 2 je příliš krátký na smysluplný CCDF graf."
                                     )
 
-                        # -----------------------------
-                        # Srovnávací verdikt power-law
-                        # -----------------------------
                         st.markdown("#### Porovnání power-law výsledků")
 
                         compare_powerlaw_parts = []
@@ -6456,94 +5848,20 @@ else:  # "Porovnat dvě časové řady"
                 col_arc1, col_arc2 = st.columns(2)
 
                 with col_arc1:
-                    n = len(data1)
-                    node_x_line = np.arange(n)
-                    node_y_line = np.zeros(n)
-                    fig_arc1 = go.Figure()
-
-                    for i, j in G1.edges():
-                        r = (j - i) / 2
-                        mid = i + r
-                        theta = np.linspace(0, np.pi, 100)
-                        x_arc = mid + r * np.cos(theta)
-                        y_arc = r * np.sin(theta)
-                        fig_arc1.add_trace(
-                            go.Scatter(
-                                x=x_arc,
-                                y=y_arc,
-                                mode="lines",
-                                line=dict(color="gray", width=1),
-                                hoverinfo="none",
-                            )
-                        )
-
-                    fig_arc1.add_trace(
-                        go.Scatter(
-                            x=node_x_line,
-                            y=node_y_line,
-                            mode="markers",
-                            marker=dict(size=8, color="skyblue"),
-                            hoverinfo="text",
-                            hovertext=[
-                                f"Index: {i}<br>Hodnota: {data1[i]:.3f}"
-                                for i in node_x_line
-                            ],
-                        )
-                    )
-
-                    fig_arc1.update_layout(
+                    fig_arc1 = create_arc_diagram_figure(
+                        G1,
+                        data1,
                         title="Arc Diagram HVG – série 1",
-                        showlegend=False,
-                        xaxis=dict(showgrid=False, zeroline=False, title="Index"),
-                        yaxis=dict(showgrid=False, zeroline=False, visible=False),
-                        margin=dict(b=20, l=5, r=5, t=40),
-                        height=300,
+                        node_color="skyblue",
                     )
                     st.plotly_chart(fig_arc1, use_container_width=True)
 
                 with col_arc2:
-                    n = len(data2)
-                    node_x_line = np.arange(n)
-                    node_y_line = np.zeros(n)
-                    fig_arc2 = go.Figure()
-
-                    for i, j in G2.edges():
-                        r = (j - i) / 2
-                        mid = i + r
-                        theta = np.linspace(0, np.pi, 100)
-                        x_arc = mid + r * np.cos(theta)
-                        y_arc = r * np.sin(theta)
-                        fig_arc2.add_trace(
-                            go.Scatter(
-                                x=x_arc,
-                                y=y_arc,
-                                mode="lines",
-                                line=dict(color="gray", width=1),
-                                hoverinfo="none",
-                            )
-                        )
-
-                    fig_arc2.add_trace(
-                        go.Scatter(
-                            x=node_x_line,
-                            y=node_y_line,
-                            mode="markers",
-                            marker=dict(size=8, color="lightgreen"),
-                            hoverinfo="text",
-                            hovertext=[
-                                f"Index: {i}<br>Hodnota: {data2[i]:.3f}"
-                                for i in node_x_line
-                            ],
-                        )
-                    )
-
-                    fig_arc2.update_layout(
+                    fig_arc2 = create_arc_diagram_figure(
+                        G2,
+                        data2,
                         title="Arc Diagram HVG – série 2",
-                        showlegend=False,
-                        xaxis=dict(showgrid=False, zeroline=False, title="Index"),
-                        yaxis=dict(showgrid=False, zeroline=False, visible=False),
-                        margin=dict(b=20, l=5, r=5, t=40),
-                        height=300,
+                        node_color="lightgreen",
                     )
                     st.plotly_chart(fig_arc2, use_container_width=True)
 
