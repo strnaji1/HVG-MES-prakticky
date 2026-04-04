@@ -7,7 +7,9 @@ import networkx as nx
 import plotly.express as px
 import plotly.graph_objects as go
 import re 
+from io import BytesIO
 
+st.set_page_config(page_title="HVG Vizualizátor", layout="wide")
 # naše služby / třídy
 from services.generators import (
     generate_logistic_map,
@@ -15,15 +17,10 @@ from services.generators import (
     generate_lorenz_x,
     generate_pink_noise,
 )
-from services.hvg_graph import (
-    build_hvg,
-    build_configuration_graph_from_hvg,
-    
-)
+
 from services.analysis import (
     compute_degree_distribution_metrics,
     shannon_entropy,
-    SmallWorldAnalyzer,
     HAS_POWERLAW,
     compute_configuration_model_metrics,
     compute_graph_metrics,
@@ -35,11 +32,24 @@ from services.analysis import (
     create_degree_cdf_figure,
     create_arc_diagram_figure,
     compute_powerlaw_fit,
+    build_hvg_cached,
 )
 
+@st.cache_data(show_spinner=False)
+def read_csv_cached(file_bytes, has_header=True):
+    buffer = BytesIO(file_bytes)
+
+    if has_header:
+        df = pd.read_csv(buffer, sep=None, engine="python")
+    else:
+        df = pd.read_csv(buffer, sep=None, engine="python", header=None)
+        df.columns = [f"sloupec_{i}" for i in range(df.shape[1])]
+
+    return df
 
 def load_csv_series(
-    uploaded_file,
+    uploaded_file=None,
+    df_input=None,
     selected_column=None,
     normalize=False,
     start_index=0,
@@ -52,17 +62,16 @@ def load_csv_series(
     aggregation_freq=None,    # např. "5min", "1h", "1D"
     aggregation_method="mean",
 ):
-    if uploaded_file is None:
+    if uploaded_file is None and df_input is None:
         return None, None, None, "Nebyl nahrán žádný soubor."
 
     try:
-        uploaded_file.seek(0)
-
-        if has_header:
-            df = pd.read_csv(uploaded_file, sep=None, engine="python")
+        if df_input is not None:
+            df = df_input.copy()
         else:
-            df = pd.read_csv(uploaded_file, sep=None, engine="python", header=None)
-            df.columns = [f"sloupec_{i}" for i in range(df.shape[1])]
+            uploaded_file.seek(0)
+            file_bytes = uploaded_file.getvalue()
+            df = read_csv_cached(file_bytes, has_header=has_header).copy()
 
         if df.empty:
             return None, None, None, "CSV soubor je prázdný."
@@ -270,6 +279,7 @@ def sync_cmp_from_manual():
     st.session_state.csv2_start_manual = start
     st.session_state.csv2_end_manual = end
     st.session_state.csv2_range = (start, end)
+    
 def infer_series_type(series_name):
     if not series_name:
         return None
@@ -758,65 +768,7 @@ def get_classification_status_text(classification):
     else:
         return "Výsledek naznačuje určitý směr, ale důkaz není příliš silný."
 
-def compute_graph_metrics(G):
-    n_nodes = G.number_of_nodes()
-    n_edges = G.number_of_edges()
 
-    degrees = [d for _, d in G.degree()]
-    avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
-
-    try:
-        C = nx.average_clustering(G)
-    except Exception:
-        C = float("nan")
-
-    is_conn = nx.is_connected(G) if n_nodes > 0 else False
-
-    L = None
-    diam = None
-    if is_conn and n_nodes > 1:
-        try:
-            L = nx.average_shortest_path_length(G)
-        except Exception:
-            L = None
-        try:
-            diam = nx.diameter(G)
-        except Exception:
-            diam = None
-
-    try:
-        assort = nx.degree_assortativity_coefficient(G)
-    except Exception:
-        assort = None
-
-    L_rand = None
-    C_rand = None
-    if n_nodes > 1 and avg_deg > 1:
-        try:
-            L_rand = np.log(n_nodes) / np.log(avg_deg)
-            C_rand = avg_deg / n_nodes
-        except Exception:
-            L_rand = None
-            C_rand = None
-
-    analyzer = SmallWorldAnalyzer(C, L, C_rand, L_rand)
-    sigma = analyzer.sigma
-
-    return {
-        "n_nodes": n_nodes,
-        "n_edges": n_edges,
-        "degrees": degrees,
-        "avg_deg": avg_deg,
-        "C": C,
-        "is_conn": is_conn,
-        "L": L,
-        "diam": diam,
-        "assort": assort,
-        "L_rand": L_rand,
-        "C_rand": C_rand,
-        "sigma": sigma,
-        "analyzer": analyzer,
-    }   
 # =========================
 #  Inicializace session state
 # =========================
@@ -857,7 +809,7 @@ for key in (
         else:
             st.session_state[key] = False
 
-st.set_page_config(page_title="HVG Vizualizátor", layout="wide")
+
 
 # =========================
 #  Hlavička
@@ -887,12 +839,31 @@ if analysis_mode == "Časová řada → HVG":
     st.sidebar.subheader("Nastavení časové řady")
 
     mode = st.sidebar.radio(
-        "Typ vstupu", ["Standardní signály", "Chaotické generátory", "Nahrát CSV"]
+        "Typ vstupu",
+        ["Standardní signály", "Chaotické generátory", "Nahrát CSV"],
     )
 
     typ = None
     chaos_typ = None
 
+    # bezpečné výchozí hodnoty pro CSV větev
+    uploaded_file = None
+    df_preview = None
+    csv_column = None
+    normalize_csv = False
+    csv_start_index = 0
+    csv_end_index = 0
+    csv_has_header = True
+    csv_datetime_column = "Žádný"
+    selection_mode_main = "index"
+    csv_start_date = None
+    csv_end_date = None
+    aggregation_freq_main = "bez agregace"
+    aggregation_method_main = "mean"
+
+    # =========================
+    # Standardní signály
+    # =========================
     if mode == "Standardní signály":
         typ = st.sidebar.selectbox(
             "Vyber typ časové řady",
@@ -908,19 +879,26 @@ if analysis_mode == "Časová řada → HVG":
             length = st.sidebar.slider("Délka řady", 10, 5000, 50)
             low = st.sidebar.number_input("Minimální hodnota", value=0.0, step=0.1)
             high = st.sidebar.number_input("Maximální hodnota", value=1.0, step=0.1)
+
         elif typ == "Náhodná normální":
             length = st.sidebar.slider("Délka řady", 10, 5000, 50)
             mu = st.sidebar.number_input("Střední hodnota μ", value=0.0)
             sigma = st.sidebar.number_input("Směrodatná odchylka σ", value=1.0)
+
         elif typ == "Sinusovka":
             length = st.sidebar.slider("Délka řady", 10, 5000, 100)
             amp = st.sidebar.number_input("Amplituda", value=1.0)
             freq = st.sidebar.number_input("Frekvence", value=1.0)
+
         elif typ == "Ruční vstup":
             raw_text = st.sidebar.text_area(
-                "Zadej hodnoty oddělené čárkou", value="10, 5, 3, 7, 6"
+                "Zadej hodnoty oddělené čárkou",
+                value="10, 5, 3, 7, 6",
             )
-            
+
+    # =========================
+    # Chaotické generátory
+    # =========================
     elif mode == "Chaotické generátory":
         chaos_typ = st.sidebar.selectbox(
             "Vyber chaotický systém",
@@ -970,213 +948,142 @@ if analysis_mode == "Časová řada → HVG":
 
         elif chaos_typ == "1/f šum (pink noise)":
             length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)
-                       
+
+    # =========================
+    # Nahrát CSV
+    # =========================
     elif mode == "Nahrát CSV":
-                uploaded_file = st.sidebar.file_uploader(
-                    "Nahraj CSV soubor", type="csv", key="csv_main"
+        uploaded_file = st.sidebar.file_uploader(
+            "Nahraj CSV soubor",
+            type="csv",
+            key="csv_main",
+        )
+
+        if uploaded_file is not None:
+            csv_has_header = st.sidebar.checkbox(
+                "CSV má hlavičku",
+                value=True,
+                key="csv_main_header",
+            )
+
+            try:
+                df_preview = read_csv_cached(
+                    uploaded_file.getvalue(),
+                    has_header=csv_has_header,
+                )
+                err = None
+            except Exception as e:
+                df_preview = None
+                err = f"Chyba při načítání CSV: {e}"
+
+            if err:
+                st.sidebar.error(err)
+            else:
+                st.sidebar.caption("Náhled (prvních 5 řádků):")
+                st.sidebar.dataframe(df_preview.head(), use_container_width=True)
+
+                csv_column = st.sidebar.selectbox(
+                    "Vyber sloupec s hodnotami časové řady",
+                    options=df_preview.columns.tolist(),
+                    key="csv_main_col",
                 )
 
-                csv_column = None
-                normalize_csv = False
-                csv_start_index = 0
-                csv_end_index = 0
-                csv_has_header = True
+                datetime_options = ["Žádný"] + df_preview.columns.tolist()
+                csv_datetime_column = st.sidebar.selectbox(
+                    "Sloupec s datem/časem (volitelné)",
+                    options=datetime_options,
+                    key="csv_main_datetime_col",
+                )
 
-                if uploaded_file is not None:
-                    csv_has_header = st.sidebar.checkbox(
-                        "CSV má hlavičku", value=True, key="csv_main_header"
+                if csv_datetime_column != "Žádný":
+                    selection_mode_main = st.sidebar.radio(
+                        "Jak chceš vybírat rozsah?",
+                        ["Podle indexu", "Podle data"],
+                        key="csv_main_selection_mode",
                     )
 
-                    df_preview, _, _, err = load_csv_series(
-                        uploaded_file,
-                        has_header=csv_has_header,
+                normalize_csv = st.sidebar.checkbox(
+                    "Normalizovat (z-score)",
+                    value=False,
+                    key="csv_main_norm",
+                )
+
+                if normalize_csv:
+                    st.sidebar.caption(
+                        "Data jsou převedena na bezrozměrnou škálu (z-score). "
+                        "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
                     )
 
-                    if err:
-                        st.sidebar.error(err)
-                    else:
-                        st.sidebar.caption("Náhled (prvních 5 řádků):")
-                        st.sidebar.dataframe(df_preview.head(), use_container_width=True)
+                if csv_datetime_column != "Žádný":
+                    st.sidebar.markdown("**Agregace časové řady**")
 
-                        csv_column = st.sidebar.selectbox(
-                            "Vyber sloupec s hodnotami časové řady",
-                            options=df_preview.columns.tolist(),
-                            key="csv_main_col",
+                    aggregation_freq_main = st.sidebar.selectbox(
+                        "Agregační krok",
+                        options=[
+                            "bez agregace",
+                            "1min",
+                            "5min",
+                            "10min",
+                            "30min",
+                            "1h",
+                            "1D",
+                        ],
+                        key="csv_main_agg_freq",
+                    )
+
+                    if aggregation_freq_main != "bez agregace":
+                        aggregation_method_main = st.sidebar.selectbox(
+                            "Agregační metoda",
+                            options=["mean", "median", "min", "max", "sum", "last"],
+                            key="csv_main_agg_method",
                         )
-                        datetime_options = ["Žádný"] + df_preview.columns.tolist()
 
-                        csv_datetime_column = st.sidebar.selectbox(
-                            "Sloupec s datem/časem (volitelné)",
-                            options=datetime_options,
-                            key="csv_main_datetime_col",
+                st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
+
+                preview_meta = None
+                preview_err = None
+
+                if csv_datetime_column != "Žádný" and selection_mode_main == "Podle data":
+                    dt_series = pd.to_datetime(
+                        df_preview[csv_datetime_column],
+                        errors="coerce",
+                    ).dropna()
+
+                    if len(dt_series) > 0:
+                        min_dt = dt_series.min()
+                        max_dt = dt_series.max()
+
+                        csv_start_date = st.sidebar.date_input(
+                            "Datum od",
+                            value=min_dt.date(),
+                            min_value=min_dt.date(),
+                            max_value=max_dt.date(),
+                            key="csv_main_date_start",
                         )
 
-                        selection_mode_main = "index"
-
-                        if csv_datetime_column != "Žádný":
-                            selection_mode_main = st.sidebar.radio(
-                                "Jak chceš vybírat rozsah?",
-                                ["Podle indexu", "Podle data"],
-                                key="csv_main_selection_mode",
-                            )
-
-                        normalize_csv = st.sidebar.checkbox(
-                            "Normalizovat (z-score)", value=False, key="csv_main_norm"
+                        csv_end_date = st.sidebar.date_input(
+                            "Datum do",
+                            value=max_dt.date(),
+                            min_value=min_dt.date(),
+                            max_value=max_dt.date(),
+                            key="csv_main_date_end",
                         )
-                        if normalize_csv:
-                            st.sidebar.caption(
-                                "Data jsou převedena na bezrozměrnou škálu (z-score). "
-                                "Každá hodnota říká, o kolik směrodatných odchylek se liší od průměru."
-                            )
-                        aggregation_freq_main = "bez agregace"
-                        aggregation_method_main = "mean"
 
-                        if csv_datetime_column != "Žádný":
-                            st.sidebar.markdown("**Agregace časové řady**")
-
-                            aggregation_freq_main = st.sidebar.selectbox(
-                                "Agregační krok",
-                                options=[
-                                    "bez agregace",
-                                    "1min",
-                                    "5min",
-                                    "10min",
-                                    "30min",
-                                    "1h",
-                                    "1D",
-                                ],
-                                key="csv_main_agg_freq",
-                            )
-
-                            if aggregation_freq_main != "bez agregace":
-                                aggregation_method_main = st.sidebar.selectbox(
-                                    "Agregační metoda",
-                                    options=["mean", "median", "min", "max", "sum", "last"],
-                                    key="csv_main_agg_method",
-                                )
-                                
-                        st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
-
-                        csv_start_date = None
-                        csv_end_date = None
-
-                        if csv_datetime_column != "Žádný" and selection_mode_main == "Podle data":
-                            dt_series = pd.to_datetime(df_preview[csv_datetime_column], errors="coerce").dropna()
-
-                            if len(dt_series) > 0:
-                                min_dt = dt_series.min()
-                                max_dt = dt_series.max()
-
-                                csv_start_date = st.sidebar.date_input(
-                                    "Datum od",
-                                    value=min_dt.date(),
-                                    min_value=min_dt.date(),
-                                    max_value=max_dt.date(),
-                                    key="csv_main_date_start",
-                                )
-
-                                csv_end_date = st.sidebar.date_input(
-                                    "Datum do",
-                                    value=max_dt.date(),
-                                    min_value=min_dt.date(),
-                                    max_value=max_dt.date(),
-                                    key="csv_main_date_end",
-                                )
-
-                                _, _, preview_meta, preview_err = load_csv_series(
-                                    uploaded_file,
-                                    selected_column=csv_column,
-                                    normalize=False,
-                                    start_index=0,
-                                    end_index=None,
-                                    has_header=csv_has_header,
-                                    datetime_column=csv_datetime_column,
-                                    selection_mode="date",
-                                    start_date=csv_start_date,
-                                    end_date=csv_end_date,
-                                    aggregation_freq=aggregation_freq_main,
-                                    aggregation_method=aggregation_method_main,
-                                )
-
-                                if preview_err:
-                                    st.sidebar.warning(preview_err)
-                                elif preview_meta is not None:
-                                    st.sidebar.caption(
-                                        f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
-                                    )
-                            else:
-                                st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
-                        else:
-                            max_possible_index = max(0, len(df_preview) - 1)
-                            default_end_main = min(999, max_possible_index)
-
-                            if "csv_main_range" not in st.session_state:
-                                st.session_state.csv_main_range = (0, default_end_main)
-
-                            if "csv_main_start_manual" not in st.session_state:
-                                st.session_state.csv_main_start_manual = st.session_state.csv_main_range[0]
-
-                            if "csv_main_end_manual" not in st.session_state:
-                                st.session_state.csv_main_end_manual = st.session_state.csv_main_range[1]
-
-                            start_tmp, end_tmp = st.session_state.csv_main_range
-                            start_tmp = min(max(0, start_tmp), max_possible_index)
-                            end_tmp = min(max(0, end_tmp), max_possible_index)
-                            if start_tmp > end_tmp:
-                                start_tmp, end_tmp = end_tmp, start_tmp
-
-                            st.session_state.csv_main_range = (start_tmp, end_tmp)
-                            st.session_state.csv_main_start_manual = start_tmp
-                            st.session_state.csv_main_end_manual = end_tmp
-
-                            csv_start_index, csv_end_index = st.sidebar.slider(
-                                "Vyber rozsah řádků",
-                                min_value=0,
-                                max_value=max_possible_index,
-                                step=1,
-                                key="csv_main_range",
-                                on_change=sync_main_from_slider,
-                            )
-
-                            col_range_1, col_range_2 = st.sidebar.columns(2)
-
-                            with col_range_1:
-                                st.number_input(
-                                    "Od",
-                                    min_value=0,
-                                    max_value=max_possible_index,
-                                    step=1,
-                                    key="csv_main_start_manual",
-                                    on_change=sync_main_from_manual,
-                                )
-
-                            with col_range_2:
-                                st.number_input(
-                                    "Do",
-                                    min_value=0,
-                                    max_value=max_possible_index,
-                                    step=1,
-                                    key="csv_main_end_manual",
-                                    on_change=sync_main_from_manual,
-                                )
-
-                            csv_start_index = st.session_state.csv_main_start_manual
-                            csv_end_index = st.session_state.csv_main_end_manual
-
-                            _, _, preview_meta, preview_err = load_csv_series(
-                                uploaded_file,
-                                selected_column=csv_column,
-                                normalize=False,
-                                start_index=csv_start_index,
-                                end_index=csv_end_index,
-                                has_header=csv_has_header,
-                                datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
-                                selection_mode="index",
-                                start_date=None,
-                                end_date=None,
-                                aggregation_freq=aggregation_freq_main,
-                                aggregation_method=aggregation_method_main,
-                            )
+                        _, _, preview_meta, preview_err = load_csv_series(
+                            uploaded_file,
+                            df_input=df_preview,
+                            selected_column=csv_column,
+                            normalize=False,
+                            start_index=0,
+                            end_index=None,
+                            has_header=csv_has_header,
+                            datetime_column=csv_datetime_column,
+                            selection_mode="date",
+                            start_date=csv_start_date,
+                            end_date=csv_end_date,
+                            aggregation_freq=aggregation_freq_main,
+                            aggregation_method=aggregation_method_main,
+                        )
 
                         if preview_err:
                             st.sidebar.warning(preview_err)
@@ -1184,60 +1091,100 @@ if analysis_mode == "Časová řada → HVG":
                             st.sidebar.caption(
                                 f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
                             )
-                        else:  # Chaotické generátory
-                            chaos_typ = st.sidebar.selectbox(
-                                "Vyber chaotický systém",
-                                [
-                                    "Logistická mapa",
-                                    "Henonova mapa",
-                                    "Lorenzův systém (x-složka)",
-                                    "1/f šum (pink noise)",
-                                ],
-                            )
+                    else:
+                        st.sidebar.warning(
+                            "Ve vybraném datetime sloupci nejsou platná data."
+                        )
 
-                        if chaos_typ == "Logistická mapa":
-                            length = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100)
-                            r = st.sidebar.slider("Parametr r", 3.5, 4.0, 3.9, step=0.01)
-                            x0 = st.sidebar.number_input(
-                                "Počáteční x₀", min_value=0.0, max_value=1.0, value=0.2, step=0.01
-                            )
-                            burn_log = st.sidebar.number_input(
-                                "Burn-in iterace", 100, 10000, 500, step=100
-                            )
+                else:
+                    max_possible_index = max(0, len(df_preview) - 1)
+                    default_end_main = min(999, max_possible_index)
 
-                        elif chaos_typ == "Henonova mapa":
-                            length = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100)
-                            a = st.sidebar.number_input("Parametr a", value=1.4, step=0.1)
-                            b = st.sidebar.number_input("Parametr b", value=0.3, step=0.05)
-                            x0 = st.sidebar.number_input("Počáteční x₀", value=0.1, step=0.05)
-                            y0 = st.sidebar.number_input("Počáteční y₀", value=0.0, step=0.05)
-                            burn_henon = st.sidebar.number_input(
-                                "Burn-in iterace", 100, 10000, 500, step=100
-                            )
+                    if "csv_main_range" not in st.session_state:
+                        st.session_state.csv_main_range = (0, default_end_main)
 
-                        elif chaos_typ == "Lorenzův systém (x-složka)":
-                            length = st.sidebar.slider("Délka řady", 200, 10000, 2000, step=200)
-                            dt = st.sidebar.number_input(
-                                "Krok integrace dt", value=0.01, step=0.005, format="%.3f"
-                            )
-                            sigma_l = st.sidebar.number_input("σ (sigma)", value=10.0, step=1.0)
-                            rho_l = st.sidebar.number_input("ρ (rho)", value=28.0, step=1.0)
-                            beta_l = st.sidebar.number_input("β (beta)", value=8 / 3, step=0.1)
-                            burn_lor = st.sidebar.number_input(
-                                "Burn-in kroků", 500, 20000, 1000, step=500
-                            )
+                    if "csv_main_start_manual" not in st.session_state:
+                        st.session_state.csv_main_start_manual = st.session_state.csv_main_range[0]
 
-                        elif chaos_typ == "1/f šum (pink noise)":
-                            length = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100)
+                    if "csv_main_end_manual" not in st.session_state:
+                        st.session_state.csv_main_end_manual = st.session_state.csv_main_range[1]
 
-                   
+                    start_tmp, end_tmp = st.session_state.csv_main_range
+                    start_tmp = min(max(0, start_tmp), max_possible_index)
+                    end_tmp = min(max(0, end_tmp), max_possible_index)
 
-        # tlačítko pro generování
-    generate = st.sidebar.button("Načíst / generovat řadu") 
-        # =========================
-        #  Generování dat
-        # =========================
+                    if start_tmp > end_tmp:
+                        start_tmp, end_tmp = end_tmp, start_tmp
 
+                    st.session_state.csv_main_range = (start_tmp, end_tmp)
+                    st.session_state.csv_main_start_manual = start_tmp
+                    st.session_state.csv_main_end_manual = end_tmp
+
+                    csv_start_index, csv_end_index = st.sidebar.slider(
+                        "Vyber rozsah řádků",
+                        min_value=0,
+                        max_value=max_possible_index,
+                        step=1,
+                        key="csv_main_range",
+                        on_change=sync_main_from_slider,
+                    )
+
+                    col_range_1, col_range_2 = st.sidebar.columns(2)
+
+                    with col_range_1:
+                        st.number_input(
+                            "Od",
+                            min_value=0,
+                            max_value=max_possible_index,
+                            step=1,
+                            key="csv_main_start_manual",
+                            on_change=sync_main_from_manual,
+                        )
+
+                    with col_range_2:
+                        st.number_input(
+                            "Do",
+                            min_value=0,
+                            max_value=max_possible_index,
+                            step=1,
+                            key="csv_main_end_manual",
+                            on_change=sync_main_from_manual,
+                        )
+
+                    csv_start_index = st.session_state.csv_main_start_manual
+                    csv_end_index = st.session_state.csv_main_end_manual
+
+                    _, _, preview_meta, preview_err = load_csv_series(
+                        uploaded_file,
+                        df_input=df_preview,
+                        selected_column=csv_column,
+                        normalize=False,
+                        start_index=csv_start_index,
+                        end_index=csv_end_index,
+                        has_header=csv_has_header,
+                        datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
+                        selection_mode="index",
+                        start_date=None,
+                        end_date=None,
+                        aggregation_freq=aggregation_freq_main,
+                        aggregation_method=aggregation_method_main,
+                    )
+
+                    if preview_err:
+                        st.sidebar.warning(preview_err)
+                    elif preview_meta is not None:
+                        st.sidebar.caption(
+                            f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
+                        )
+
+    # =========================
+    # Tlačítko pro generování
+    # =========================
+    generate = st.sidebar.button("Načíst / generovat řadu")
+
+    # =========================
+    # Generování dat
+    # =========================
     if generate:
         data = None
         meta = None
@@ -1272,15 +1219,28 @@ if analysis_mode == "Časová řada → HVG":
             else:
                 _, data, meta, err = load_csv_series(
                     uploaded_file,
+                    df_input=df_preview,
                     selected_column=csv_column,
                     normalize=normalize_csv,
                     start_index=csv_start_index,
                     end_index=csv_end_index,
                     has_header=csv_has_header,
                     datetime_column=None if csv_datetime_column == "Žádný" else csv_datetime_column,
-                    selection_mode="date" if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else "index",
-                    start_date=csv_start_date if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else None,
-                    end_date=csv_end_date if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data") else None,
+                    selection_mode=(
+                        "date"
+                        if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data")
+                        else "index"
+                    ),
+                    start_date=(
+                        csv_start_date
+                        if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data")
+                        else None
+                    ),
+                    end_date=(
+                        csv_end_date
+                        if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data")
+                        else None
+                    ),
                     aggregation_freq=aggregation_freq_main,
                     aggregation_method=aggregation_method_main,
                 )
@@ -1295,12 +1255,22 @@ if analysis_mode == "Časová řada → HVG":
 
             elif chaos_typ == "Henonova mapa":
                 data = generate_henon_map(
-                    length, a=a, b=b, x0=x0, y0=y0, burn=burn_henon
+                    length,
+                    a=a,
+                    b=b,
+                    x0=x0,
+                    y0=y0,
+                    burn=burn_henon,
                 )
 
             elif chaos_typ == "Lorenzův systém (x-složka)":
                 data = generate_lorenz_x(
-                    length, dt=dt, sigma=sigma_l, rho=rho_l, beta=beta_l, burn=burn_lor
+                    length,
+                    dt=dt,
+                    sigma=sigma_l,
+                    rho=rho_l,
+                    beta=beta_l,
+                    burn=burn_lor,
                 )
 
             elif chaos_typ == "1/f šum (pink noise)":
@@ -1343,11 +1313,9 @@ if analysis_mode == "Časová řada → HVG":
             st.session_state.show_hvg = False
             st.session_state.show_horiz = False
 
-
     # =========================
-    #  Zobrazení časové řady + HVG linky
+    # Zobrazení časové řady + HVG linky
     # =========================
-
     if st.session_state.data is not None:
         arr = st.session_state.data
         meta = st.session_state.meta
@@ -1364,9 +1332,8 @@ if analysis_mode == "Časová řada → HVG":
         )
         fig_ts.update_traces(marker_size=8)
 
-        # Vodorovné linky
         if st.session_state.show_horiz:
-            G_tmp = build_hvg(arr)
+            G_tmp = build_hvg_cached(arr)
             shapes = []
             for i, j in G_tmp.edges():
                 y = min(arr[i], arr[j])
@@ -1384,7 +1351,6 @@ if analysis_mode == "Časová řada → HVG":
 
         st.plotly_chart(fig_ts, use_container_width=True)
 
-        # Statistiky časové řady
         st.write(f"- Délka: **{len(arr)}**")
 
         if meta is not None and meta.get("normalized", False):
@@ -1402,7 +1368,6 @@ if analysis_mode == "Časová řada → HVG":
                 f"Rozptyl: **{arr.var():.3f}**"
             )
 
-        # Tlačítka vedle sebe
         c1, c2 = st.columns(2)
 
         with c1:
@@ -1414,17 +1379,16 @@ if analysis_mode == "Časová řada → HVG":
                 st.session_state.show_horiz = not st.session_state.show_horiz
 
     # =========================
-    #  Interaktivní HVG + další sekce pod ním
+    # Interaktivní HVG + další sekce pod ním
     # =========================
-
     if st.session_state.show_hvg and st.session_state.data is not None:
         arr = st.session_state.data
-        G = build_hvg(arr)
+        G = build_hvg_cached(arr)
         powerlaw_p_result = None
         powerlaw_R_result = None
+
         st.subheader("Interaktivní vizualizace HVG")
 
-        # ---- Přehledné přepínání sekcí pod HVG ----
         section_options = [
             "Metriky HVG",
             "Propojení časová řada ↔ HVG",
@@ -1447,10 +1411,8 @@ if analysis_mode == "Časová řada → HVG":
                 "Export HVG a metrik",
             ],
         )
-        
-      
-           
-                # ====== Analytické statistiky HVG (počítáme vždy, ale zobrazíme jen pokud chceš) ======
+
+        # ====== Analytické statistiky HVG ======
         metrics_main = compute_graph_metrics(G)
 
         n_nodes = metrics_main["n_nodes"]
@@ -1467,7 +1429,6 @@ if analysis_mode == "Časová řada → HVG":
         analyzer = metrics_main["analyzer"]
 
         degree_metrics_main = compute_degree_distribution_metrics(degrees)
-
         unique_deg_all = degree_metrics_main["unique_deg"]
         counts_all = degree_metrics_main["counts"]
         pk_all = degree_metrics_main["pk"]
@@ -1479,7 +1440,7 @@ if analysis_mode == "Časová řada → HVG":
         powerlaw_p_result = None
         powerlaw_R_result = None
 
-        # ====== Konfigurační graf a jeho metriky (počítáme dopředu kvůli klasifikaci) ======
+        # ====== Konfigurační graf ======
         G_conf, metrics_conf = compute_configuration_model_metrics(G, seed=42)
 
         n_nodes_conf = metrics_conf["n_nodes"]
@@ -1493,8 +1454,8 @@ if analysis_mode == "Časová řada → HVG":
         L_rand_conf = metrics_conf["L_rand"]
         C_rand_conf = metrics_conf["C_rand"]
         sigma_conf = metrics_conf["sigma"]
-        
-        # ====== Rozmístění pro vizualizaci HVG (společné pro vše) ======
+
+        # ====== Rozmístění HVG ======
         layout_option = st.radio(
             "Rozložení HVG vrcholů",
             ["Síťové (spring layout)", "Planární (pokud možné)"],
@@ -1506,7 +1467,6 @@ if analysis_mode == "Časová řada → HVG":
         else:
             pos = compute_graph_layout(G, layout_type="planar", seed=42)
 
-        # Barevné kódování vrcholů (globálně pro HVG vizualizaci)
         color_mode = st.selectbox(
             "Barevné kódování vrcholů HVG",
             ["Jednobarevné", "Podle hodnoty časové řady", "Podle stupně"],
@@ -1519,16 +1479,15 @@ if analysis_mode == "Časová řada → HVG":
         else:
             node_color_values = None
 
-        # Volba, jestli zobrazit textové popisky vrcholů
         show_labels = st.checkbox("Zobrazit popisky vrcholů (indexy)", value=False)
 
-        # Edges HVG
         edge_x, edge_y = [], []
         for u, v in G.edges():
             x0, y0 = pos[u]
             x1, y1 = pos[v]
             edge_x += [x0, x1, None]
             edge_y += [y0, y1, None]
+
         edge_trace = go.Scatter(
             x=edge_x,
             y=edge_y,
@@ -1537,7 +1496,6 @@ if analysis_mode == "Časová řada → HVG":
             hoverinfo="none",
         )
 
-        # Nodes HVG – základní trace
         node_x, node_y, node_text = [], [], []
         for node in G.nodes():
             x, y = pos[node]
@@ -1577,7 +1535,6 @@ if analysis_mode == "Časová řada → HVG":
             textfont=dict(size=10, color="black"),
         )
 
-        # ====== případné zvýraznění (už je součást sekce "Propojení") ======
         highlight_trace = None
         neighbors = []
         selected_index = 0
@@ -1605,7 +1562,6 @@ if analysis_mode == "Časová řada → HVG":
                 f"sousedé: **{neighbors}**"
             )
 
-            # Zvýraznění vybraného vrcholu + sousedů jako separátní trace
             highlight_x, highlight_y, highlight_text = [], [], []
             highlight_nodes = [selected_index]
             if highlight_neighbors:
@@ -1630,7 +1586,6 @@ if analysis_mode == "Časová řada → HVG":
                 showlegend=False,
             )
 
-        # ====== finální HVG figure (vždy se vykreslí) ======
         data_traces = [edge_trace, node_trace]
         if highlight_trace is not None:
             data_traces.append(highlight_trace)
@@ -1647,6 +1602,7 @@ if analysis_mode == "Časová řada → HVG":
         # ====== Metriky HVG ======
         if "Metriky HVG" in selected_sections:
             col_stats1, col_stats2 = st.columns(2)
+
             with col_stats1:
                 st.markdown("**Základní metriky HVG**")
                 st.write(f"- Počet vrcholů: **{n_nodes}**")
@@ -1655,9 +1611,8 @@ if analysis_mode == "Časová řada → HVG":
                 if L is not None:
                     st.write(f"- Průměrná délka cesty L: **{L:.3f}**")
                 else:
-                    st.write(
-                        "- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*"
-                    )
+                    st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*")
+
                 if diam is not None:
                     st.write(f"- Diametr grafu: **{diam}**")
                 else:
@@ -1666,6 +1621,7 @@ if analysis_mode == "Časová řada → HVG":
             with col_stats2:
                 st.markdown("**Clustering a small-world charakter**")
                 st.write(f"- Clustering coefficient C: **{C:.3f}**")
+
                 if assort is not None and not np.isnan(assort):
                     st.write(f"- Degree assortativity: **{assort:.3f}**")
                 else:
@@ -1700,11 +1656,10 @@ if analysis_mode == "Časová řada → HVG":
                         "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
                     )
 
-       
-
-        # ====== Zvýraznění v časové řadě (jen pokud je sekce propojení aktivní) ======
+        # ====== Zvýraznění v časové řadě ======
         if "Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
             st.subheader("Časová řada se zvýrazněným vrcholem a sousedy")
+
             df_ts2 = pd.DataFrame({"index": np.arange(len(arr)), "value": arr})
             fig_ts2 = px.line(
                 df_ts2,
@@ -1716,7 +1671,6 @@ if analysis_mode == "Časová řada → HVG":
             )
             fig_ts2.update_traces(marker_size=8)
 
-            # vybraný vrchol
             fig_ts2.add_trace(
                 go.Scatter(
                     x=[selected_index],
@@ -1731,7 +1685,6 @@ if analysis_mode == "Časová řada → HVG":
                 )
             )
 
-            # sousedi
             if len(neighbors) > 0:
                 fig_ts2.add_trace(
                     go.Scatter(
@@ -1749,24 +1702,23 @@ if analysis_mode == "Časová řada → HVG":
 
             st.plotly_chart(fig_ts2, use_container_width=True)
 
-        # =========================
-        #  Konfigurační graf (null model)
-        # =========================
+        # ====== Konfigurační graf ======
         if "Konfigurační graf (null model)" in selected_sections:
             st.markdown("### Konfigurační graf (null model)")
 
             col_conf1, col_conf2 = st.columns(2)
+
             with col_conf1:
                 st.markdown("**Konfigurační graf – základní metriky**")
                 st.write(f"- Počet vrcholů: **{n_nodes_conf}**")
                 st.write(f"- Počet hran: **{n_edges_conf}**")
                 st.write(f"- Průměrný stupeň: **{avg_deg_conf:.3f}**")
+
                 if L_conf is not None:
                     st.write(f"- Průměrná délka cesty L_conf: **{L_conf:.3f}**")
                 else:
-                    st.write(
-                        "- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*"
-                    )
+                    st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
+
                 if diam_conf is not None:
                     st.write(f"- Průměr grafu (diameter_conf): **{diam_conf}**")
                 else:
@@ -1775,16 +1727,13 @@ if analysis_mode == "Časová řada → HVG":
             with col_conf2:
                 st.markdown("**Konfigurační graf – clustering, assortativita, σ_conf**")
                 st.write(f"- Clustering coefficient C_conf: **{C_conf:.3f}**")
+
                 if assort_conf is not None and not np.isnan(assort_conf):
                     st.write(f"- Degree assortativity_conf: **{assort_conf:.3f}**")
                 else:
                     st.write("- Degree assortativity_conf: *není k dispozici*")
 
-                if (
-                    L_rand_conf is not None
-                    and C_rand_conf is not None
-                    and C_rand_conf != 0
-                ):
+                if L_rand_conf is not None and C_rand_conf is not None and C_rand_conf != 0:
                     st.write(
                         "- Náhodný graf pro konfigurační model (odhad):  \n"
                         f"  - L_rand_conf ≈ **{L_rand_conf:.3f}**  \n"
@@ -1799,7 +1748,6 @@ if analysis_mode == "Časová řada → HVG":
                         "(stejná definice jako u HVG)"
                     )
 
-            # --- Porovnání HVG vs. konfigurační graf ---
             st.markdown("**Porovnání HVG vs. konfigurační graf (null model)**")
 
             if not np.isnan(C) and not np.isnan(C_conf):
@@ -1833,7 +1781,6 @@ if analysis_mode == "Časová řada → HVG":
                         "degree-preserving null model."
                     )
 
-            # --- Vizualizace konfiguračního grafu ---
             st.subheader("Konfigurační graf (vizualizace)")
             pos_conf = compute_graph_layout(G_conf, layout_type="spring", seed=42)
 
@@ -1857,9 +1804,7 @@ if analysis_mode == "Časová řada → HVG":
             )
             st.plotly_chart(fig_conf, use_container_width=True)
 
-        # =========================
-        #  „Kalkulačka“ – lokální analýza úseku časové řady
-        # =========================
+        # ====== Lokální analýza ======
         if "Lokální analýza úseku časové řady" in selected_sections:
             st.subheader("Lokální analýza úseku časové řady")
 
@@ -1890,9 +1835,8 @@ if analysis_mode == "Časová řada → HVG":
                     f"- Shannonova entropie (odhad): **{ent:.3f}**"
                 )
 
-                # Lokální HVG úseku
                 if len(segment) >= 2:
-                    G_seg = build_hvg(segment)
+                    G_seg = build_hvg_cached(segment)
                     n_seg = G_seg.number_of_nodes()
                     m_seg = G_seg.number_of_edges()
                     degs_seg = [d for _, d in G_seg.degree()]
@@ -1906,6 +1850,7 @@ if analysis_mode == "Časová řada → HVG":
                     is_conn_seg = nx.is_connected(G_seg) if n_seg > 0 else False
                     L_seg = None
                     diam_seg = None
+
                     if is_conn_seg and n_seg > 1:
                         try:
                             L_seg = nx.average_shortest_path_length(G_seg)
@@ -1926,9 +1871,7 @@ if analysis_mode == "Časová řada → HVG":
                     if diam_seg is not None:
                         st.write(f"- Průměr grafu (lokální): **{diam_seg}**")
 
-        # =========================
-        #  Výběr podgrafu z HVG
-        # =========================
+        # ====== Podgraf HVG ======
         if "Podgraf HVG" in selected_sections:
             st.subheader("Podgraf HVG podle vybraných vrcholů")
 
@@ -1965,11 +1908,10 @@ if analysis_mode == "Časová řada → HVG":
                 except Exception:
                     C_sub = float("nan")
 
-                is_conn_sub = (
-                    nx.is_connected(G_sub) if G_sub.number_of_nodes() > 0 else False
-                )
+                is_conn_sub = nx.is_connected(G_sub) if G_sub.number_of_nodes() > 0 else False
                 L_sub = None
                 diam_sub = None
+
                 if is_conn_sub and G_sub.number_of_nodes() > 1:
                     try:
                         L_sub = nx.average_shortest_path_length(G_sub)
@@ -1987,7 +1929,6 @@ if analysis_mode == "Časová řada → HVG":
                 if diam_sub is not None:
                     st.write(f"- Průměr podgrafu: **{diam_sub}**")
 
-                # vizualizace podgrafu s původním layoutem
                 edge_trace_sub, node_trace_sub = prepare_network_traces(
                     G_sub,
                     pos,
@@ -2010,25 +1951,15 @@ if analysis_mode == "Časová řada → HVG":
 
         st.markdown("---")
 
-        # =========================
-        #  Histogram + power-law
-        # =========================
+        # ====== Rozdělení stupňů + power-law ======
         if "Rozdělení stupňů + power-law" in selected_sections:
             degs = degrees
-            # Základní metriky stupňového rozdělení
-            unique_deg, counts = np.unique(degs, return_counts=True)
-            pk = counts / counts.sum()
+            unique_deg = unique_deg_all
+            counts = counts_all
+            pk = pk_all
+            entropy_deg = entropy_deg_global
+            entropy_deg_norm = entropy_deg_norm_global
 
-            entropy_deg = -np.sum(pk * np.log(pk))
-
-            # Normalizovaná entropie na intervalu <0, 1>
-            n_unique_deg = len(unique_deg)
-            if n_unique_deg > 1:
-                entropy_deg_norm = entropy_deg / np.log(n_unique_deg)
-            else:
-                entropy_deg_norm = 0.0
-
-            # Slovní klasifikace normalizované entropie
             entropy_level, entropy_text = classify_entropy_level(entropy_deg_norm)
 
             st.subheader("Základní metriky stupňového rozdělení")
@@ -2037,33 +1968,24 @@ if analysis_mode == "Časová řada → HVG":
 
             with col_deg_1:
                 st.metric("Průměrný stupeň", f"{np.mean(degs):.3f}")
-
             with col_deg_2:
                 st.metric("Medián stupně", f"{np.median(degs):.3f}")
-
             with col_deg_3:
                 st.metric("Maximální stupeň", f"{np.max(degs)}")
-
             with col_deg_4:
                 st.metric("Shannonova entropie", f"{entropy_deg:.3f}")
-
             with col_deg_5:
                 st.metric("Norm. entropie", f"{entropy_deg_norm:.3f}")
-                st.caption(entropy_level)  
-            # =========================
-            # Stručná interpretace rozdělení stupňů
-            # =========================
+                st.caption(entropy_level)
+
             st.subheader("Stručná interpretace rozdělení stupňů")
 
             interp_parts = []
-
-            # interpretace entropie
             interp_parts.append(
                 f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm:.3f}**, "
                 f"což odpovídá kategorii **{entropy_level}**. {entropy_text}"
             )
 
-            # interpretace podle max stupně a rozptylu stupňů
             degree_range = np.max(degs) - np.min(degs)
             if degree_range <= 2:
                 interp_parts.append(
@@ -2078,37 +2000,25 @@ if analysis_mode == "Časová řada → HVG":
                     "Rozsah stupňů je poměrně široký, takže v síti existují jak slabě propojené, tak výrazně propojené vrcholy."
                 )
 
-            # interpretace PDF
             peak_degree = unique_deg[np.argmax(pk)]
             interp_parts.append(
                 f"PDF dosahuje maxima při stupni **k = {peak_degree}**, takže právě tento stupeň je v síti nejčastější."
             )
 
-            # interpretace CDF
             median_degree = np.median(degs)
             interp_parts.append(
                 f"CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů; medián stupně je **{median_degree:.3f}**."
             )
 
             st.info(" ".join(interp_parts))
-            
-            # =========================
-            # Histogram stupňů 1řada
-            # =========================
-            
+
             fig_hist = create_degree_histogram_figure(
                 degs,
                 title="Histogram stupňů",
             )
             st.plotly_chart(fig_hist, use_container_width=True)
 
-          
-            
-            # =========================
-            # PDF stupňového rozdělení
-            # =========================
             st.subheader("PDF stupňového rozdělení")
-
             fig_pdf = create_degree_pdf_figure(
                 unique_deg,
                 pk,
@@ -2121,13 +2031,8 @@ if analysis_mode == "Časová řada → HVG":
                 "že náhodně vybraný vrchol v HVG má právě stupeň k."
             )
 
-
-            # =========================
-            # CDF stupňového rozdělení
-            # =========================
             st.subheader("CDF stupňového rozdělení")
-
-            cdf_vals = np.cumsum(pk)
+            cdf_vals = degree_metrics_main["cdf"]
             fig_cdf = create_degree_cdf_figure(
                 unique_deg,
                 cdf_vals,
@@ -2135,16 +2040,11 @@ if analysis_mode == "Časová řada → HVG":
             )
             st.plotly_chart(fig_cdf, use_container_width=True)
 
-            st.plotly_chart(fig_cdf, use_container_width=True)
-
             st.caption(
                 "CDF (Cumulative Distribution Function) ukazuje pravděpodobnost, "
                 "že náhodně vybraný vrchol v HVG má stupeň menší nebo roven k."
             )
-            
-            # =========================
-            # CCDF + power-law test (log-log graf)
-            # =========================
+
             do_powerlaw_global = st.checkbox(
                 "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
                 key="powerlaw_main_global",
@@ -2193,9 +2093,7 @@ if analysis_mode == "Časová řada → HVG":
                                     "Power-law model je horší než exponenciální rozdělení."
                                 )
                         else:
-                            st.info(
-                                "Test je neprůkazný – nelze rozhodnout."
-                            )
+                            st.info("Test je neprůkazný – nelze rozhodnout.")
 
                         degs_for_fit = powerlaw_result["degrees_for_fit"]
                         unique_sorted = np.sort(np.unique(degs_for_fit))
@@ -2216,7 +2114,6 @@ if analysis_mode == "Časová řada → HVG":
                             ccdf_theory *= ccdf_emp[0] / ccdf_theory[0]
 
                             fig_ccdf = go.Figure()
-
                             fig_ccdf.add_trace(
                                 go.Scatter(
                                     x=k_emp,
@@ -2225,7 +2122,6 @@ if analysis_mode == "Časová řada → HVG":
                                     name="Empirická CCDF",
                                 )
                             )
-
                             fig_ccdf.add_trace(
                                 go.Scatter(
                                     x=k_theory,
@@ -2234,7 +2130,6 @@ if analysis_mode == "Časová řada → HVG":
                                     name=f"Power-law fit (α={alpha:.2f})",
                                 )
                             )
-
                             fig_ccdf.update_layout(
                                 title="CCDF (log–log)",
                                 xaxis_type="log",
@@ -2242,39 +2137,21 @@ if analysis_mode == "Časová řada → HVG":
                                 xaxis_title="Stupeň k",
                                 yaxis_title="P(K ≥ k)",
                             )
-
                             st.plotly_chart(fig_ccdf, use_container_width=True)
                         else:
-                            st.info(
-                                "Tail je příliš krátký pro CCDF graf."
-                            )
+                            st.info("Tail je příliš krátký pro CCDF graf.")
 
-                        except Exception as e:
-                        powerlaw_p_result = None
-                        powerlaw_R_result = None
-                        alpha_powerlaw = None
-                        xmin_powerlaw = None
-                        st.info(
-                            f"Power-law test se nepodařilo spolehlivě vyhodnotit: {e}"
-                        )
-
-
-
-               # ====== Shrnutí analýzy ======
+        # ====== Shrnutí analýzy ======
         if "Shrnutí analýzy" in selected_sections:
             st.subheader("Shrnutí analýzy")
 
-            experiment_name_single = st.text_input(
+            experiment_name = st.text_input(
                 "Název experimentu",
                 value="Analýza jedné časové řady",
-                key="single_experiment_name",
+                key="main_experiment_name",
             )
 
-            series_name = st.session_state.get("series_name", None)
-            is_normalized = st.session_state.get("series_normalized", False)
-            aggregation_freq_used = st.session_state.get("series_aggregation", None)
-
-            technical_text, interpretation_text, verdict_text = generate_hvg_summary_text(
+            tech, interp, verdict = generate_hvg_summary_text(
                 n_nodes=n_nodes,
                 n_edges=n_edges,
                 avg_deg=avg_deg,
@@ -2282,9 +2159,9 @@ if analysis_mode == "Časová řada → HVG":
                 L=L,
                 sigma_sw=sigma_sw,
                 assort=assort,
-                is_normalized=is_normalized,
-                aggregation_freq=aggregation_freq_used,
-                series_name=series_name,
+                is_normalized=st.session_state.get("series_normalized", False),
+                aggregation_freq=st.session_state.get("series_aggregation", None),
+                series_name=st.session_state.get("series_name", "Časová řada"),
             )
 
             classification = classify_series_from_hvg(
@@ -2301,9 +2178,6 @@ if analysis_mode == "Časová řada → HVG":
                 sigma_conf=sigma_conf,
             )
 
-            # =========================
-            # Mini validace vstupu
-            # =========================
             validation_messages = []
 
             if len(arr) < 10:
@@ -2325,38 +2199,12 @@ if analysis_mode == "Časová řada → HVG":
                 for msg in validation_messages:
                     st.warning(msg)
 
-            # =========================
-            # Rychlé metriky nahoře
-            # =========================
-            col_sum1, col_sum2, col_sum3 = st.columns(3)
-
-            with col_sum1:
-                st.metric("Počet vrcholů", n_nodes)
-                st.metric("Počet hran", n_edges)
-
-            with col_sum2:
-                st.metric("Průměrný stupeň", f"{avg_deg:.3f}")
-                st.metric("Clustering", f"{C:.3f}" if not np.isnan(C) else "N/A")
-
-            with col_sum3:
-                st.metric("Průměrná délka cesty", f"{L:.3f}" if L is not None else "N/A")
-                st.metric(
-                    "Small-world index σ",
-                    f"{sigma_sw:.2f}" if sigma_sw is not None and not np.isnan(sigma_sw) else "N/A"
-                )
-
-            # =========================
-            # Textové shrnutí
-            # =========================
             st.markdown("**Technické shrnutí**")
-            st.info(technical_text)
+            st.info(tech)
 
             st.markdown("**Interpretace řady**")
-            st.write(interpretation_text)
+            st.write(interp)
 
-            # =========================
-            # Orientační klasifikace
-            # =========================
             st.markdown("**Orientační klasifikace**")
             classification_text = (
                 f"**{classification['label']}** "
@@ -2384,57 +2232,45 @@ if analysis_mode == "Časová řada → HVG":
                 f"{classification['dominance_text']}"
             )
 
-            # =========================
-            # Závěr
-            # =========================
             st.markdown("**Závěr**")
-            st.warning(verdict_text)
+            st.warning(verdict)
 
-            # =========================
-            # Skóre interpretací
-            # =========================
             st.markdown("**Skóre jednotlivých interpretací**")
-            score_col1, score_col2, score_col3 = st.columns(3)
+            c1, c2, c3 = st.columns(3)
 
-            with score_col1:
+            with c1:
                 st.metric(
                     "Pravidelná / periodická",
                     f"{classification['scores']['Spíše pravidelná / periodická']:.1f}",
-                    delta=f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %"
+                    delta=f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
                 )
 
-            with score_col2:
+            with c2:
                 st.metric(
                     "Komplexní / chaotická",
                     f"{classification['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
-                    delta=f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %"
+                    delta=f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
                 )
 
-            with score_col3:
+            with c3:
                 st.metric(
                     "Stochastická / náhodná",
                     f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
-                    delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %"
+                    delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
                 )
 
-            st.caption(
-                "Hlavní číslo ukazuje surové skóre podpory dané interpretace. "
-                "Procento ukazuje relativní podíl této interpretace na celkovém součtu všech tří skóre."
-            )
+            st.caption("Hlavní číslo = bodové skóre. Procento = relativní podíl interpretace.")
 
-            # =========================
-            # Relativní podpora interpretací
-            # =========================
             st.markdown("**Relativní podpora interpretací**")
 
-            labels_progress = [
+            mapping = [
                 ("Pravidelná / periodická", "Spíše pravidelná / periodická"),
                 ("Komplexní / chaotická", "Spíše komplexní deterministická / chaotická"),
                 ("Stochastická / náhodná", "Spíše stochastická / náhodná"),
             ]
 
-            for label_text, key in labels_progress:
-                st.write(label_text)
+            for label, key in mapping:
+                st.write(label)
                 st.progress(classification["normalized_scores"][key] / 100)
                 st.caption(f"{classification['normalized_scores'][key]:.1f} %")
 
@@ -2442,48 +2278,11 @@ if analysis_mode == "Časová řada → HVG":
             st.caption(classification["mixed_text"])
             st.caption(classification["warning_text"])
 
-            # =========================
-            # Grafické porovnání surového skóre
-            # =========================
-            st.markdown("### Grafické zobrazení skóre klasifikace")
-
-            scores_single_df = pd.DataFrame({
-                "Interpretace": list(classification["scores"].keys()),
-                "Skóre": list(classification["scores"].values()),
-            })
-
-            fig_scores_single = px.bar(
-                scores_single_df,
-                x="Interpretace",
-                y="Skóre",
-                title="Skóre podpory jednotlivých interpretací",
-                text="Skóre",
-            )
-
-            fig_scores_single.update_traces(textposition="outside")
-            fig_scores_single.update_layout(
-                xaxis_title="Typ interpretace",
-                yaxis_title="Skóre podpory",
-            )
-
-            st.plotly_chart(fig_scores_single, use_container_width=True)
-
-            st.caption(
-                "Graf ukazuje, jak silně síťové metriky podporují jednotlivé interpretace dané časové řady."
-            )
-
-            if experiment_name_single.strip():
-                st.caption(f"Název experimentu: {experiment_name_single}")
-
-            # =========================
-            # Export souhrnné klasifikace
-            # =========================
             st.markdown("### Export souhrnné klasifikace")
 
-            summary_single_df = pd.DataFrame([
+            summary_export_df = pd.DataFrame([
                 {
-                    "experiment_name": experiment_name_single,
-                    "series_name": series_name,
+                    "experiment_name": experiment_name,
                     "n_points": len(arr),
                     "n_nodes": n_nodes,
                     "n_edges": n_edges,
@@ -2498,24 +2297,22 @@ if analysis_mode == "Časová řada → HVG":
                     "dominance_ratio": classification["dominance_ratio"],
                     "best_score": classification["best_score"],
                     "second_score": classification["second_score"],
-                    "verdict": verdict_text,
+                    "verdict": verdict,
                 }
             ])
 
-            summary_single_csv = summary_single_df.to_csv(index=False).encode("utf-8")
+            summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8")
 
             st.download_button(
                 "Exportovat souhrnnou klasifikaci (CSV)",
-                data=summary_single_csv,
+                data=summary_export_csv,
                 file_name="single_series_summary_classification.csv",
                 mime="text/csv",
             )
 
         st.markdown("---")
 
-        # =========================
-        #  Arc diagram HVG
-        # =========================
+        # ====== Arc diagram HVG ======
         if "Arc Diagram HVG" in selected_sections:
             st.subheader("Arc Diagram HVG")
             fig_arc = create_arc_diagram_figure(
@@ -2526,21 +2323,16 @@ if analysis_mode == "Časová řada → HVG":
             )
             st.plotly_chart(fig_arc, use_container_width=True)
 
-        # =========================
-        #  Export HVG a metrik
-        # =========================
+        # ====== Export HVG a metrik ======
         if "Export HVG a metrik" in selected_sections:
             st.subheader("Export HVG a metrik")
 
-            # edge list
             edges_df = pd.DataFrame(list(G.edges()), columns=["source", "target"])
             edges_csv = edges_df.to_csv(index=False).encode("utf-8")
 
-            # adjacency matrix
             adj_df = nx.to_pandas_adjacency(G)
             adj_csv = adj_df.to_csv().encode("utf-8")
 
-            # metriky
             metrics_dict = {
                 "n_nodes": n_nodes,
                 "n_edges": n_edges,
@@ -2562,6 +2354,7 @@ if analysis_mode == "Časová řada → HVG":
             metrics_csv = metrics_df.to_csv(index=False).encode("utf-8")
 
             col_exp1, col_exp2, col_exp3 = st.columns(3)
+
             with col_exp1:
                 st.download_button(
                     "Exportovat HVG jako edge list (CSV)",
@@ -2569,6 +2362,7 @@ if analysis_mode == "Časová řada → HVG":
                     file_name="hvg_edgelist.csv",
                     mime="text/csv",
                 )
+
             with col_exp2:
                 st.download_button(
                     "Exportovat HVG jako adjacency matrix (CSV)",
@@ -2576,6 +2370,7 @@ if analysis_mode == "Časová řada → HVG":
                     file_name="hvg_adjacency.csv",
                     mime="text/csv",
                 )
+
             with col_exp3:
                 st.download_button(
                     "Exportovat metriky HVG (CSV)",
@@ -2583,7 +2378,6 @@ if analysis_mode == "Časová řada → HVG":
                     file_name="hvg_metrics.csv",
                     mime="text/csv",
                 )
-# ===== tady v další odpovědi navážeme REŽIMEM 2: Vlastní graf … =====
 # =====================================================================
 #  REŽIM 2: VLASTNÍ GRAF Z NODE/EDGE LISTU NEBO CSV
 # =====================================================================
@@ -2593,43 +2387,56 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
 
     input_mode = st.sidebar.radio(
         "Způsob zadání grafu",
-        ["Node list", "Edge list", "Node + Edge list", "Edge list (CSV)", "Node + edge list (CSV)"],
+        [
+            "Node list",
+            "Edge list",
+            "Node + Edge list",
+            "Edge list (CSV)",
+            "Node + edge list (CSV)",
+        ],
     )
 
     custom_graph = None
 
+    # =========================
+    # Node list
+    # =========================
     if input_mode == "Node list":
         nodes_text = st.sidebar.text_area(
             "Seznam vrcholů (oddělené čárkou, mezerou nebo novým řádkem)",
             value="1, 2, 3, 4",
         )
+
         if st.sidebar.button("Vytvořit graf z node listu"):
-            tokens = [
-                t.strip() for t in re.split(r"[,\s;]+", nodes_text) if t.strip() != ""
-            ]
+            tokens = [t.strip() for t in re.split(r"[,\s;]+", nodes_text) if t.strip() != ""]
             Gc = nx.Graph()
             Gc.add_nodes_from(tokens)
             custom_graph = Gc
 
+    # =========================
+    # Edge list
+    # =========================
     elif input_mode == "Edge list":
         edges_text = st.sidebar.text_area(
             "Seznam hran – každá hrana na novém řádku ve formátu `u,v` nebo `u v`",
             value="1,2\n2,3\n3,4",
         )
+
         if st.sidebar.button("Vytvořit graf z edge listu"):
             Gc = nx.Graph()
             for line in edges_text.splitlines():
                 line = line.strip()
                 if not line:
                     continue
-                parts = [
-                    p.strip() for p in re.split(r"[,\s;]+", line) if p.strip() != ""
-                ]
+                parts = [p.strip() for p in re.split(r"[,\s;]+", line) if p.strip() != ""]
                 if len(parts) >= 2:
                     u, v = parts[0], parts[1]
                     Gc.add_edge(u, v)
             custom_graph = Gc
 
+    # =========================
+    # Node + Edge list
+    # =========================
     elif input_mode == "Node + Edge list":
         nodes_text = st.sidebar.text_area(
             "Seznam vrcholů (oddělené čárkou, mezerou nebo novým řádkem)",
@@ -2639,64 +2446,85 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             "Seznam hran – každá hrana na novém řádku ve formátu `u,v` nebo `u v`",
             value="1,2\n2,3\n3,4\n4,5",
         )
+
         if st.sidebar.button("Vytvořit graf z node + edge listu"):
-            tokens = [
-                t.strip() for t in re.split(r"[,\s;]+", nodes_text) if t.strip() != ""
-            ]
+            tokens = [t.strip() for t in re.split(r"[,\s;]+", nodes_text) if t.strip() != ""]
             Gc = nx.Graph()
             Gc.add_nodes_from(tokens)
+
             for line in edges_text.splitlines():
                 line = line.strip()
                 if not line:
                     continue
-                parts = [
-                    p.strip() for p in re.split(r"[,\s;]+", line) if p.strip() != ""
-                ]
+                parts = [p.strip() for p in re.split(r"[,\s;]+", line) if p.strip() != ""]
                 if len(parts) >= 2:
                     u, v = parts[0], parts[1]
                     Gc.add_edge(u, v)
+
             custom_graph = Gc
 
-    elif input_mode == "Edge list (CSV)":  # "CSV (edge list)"
+    # =========================
+    # Edge list CSV
+    # =========================
+    elif input_mode == "Edge list (CSV)":
         st.sidebar.write(
             "Očekává se CSV se **dvěma sloupci**: zdroj a cíl hrany (edge list)."
         )
-        uploaded_edges = st.sidebar.file_uploader(
-            "Nahraj CSV s edge listem", type="csv", key="csv_edges_uploader"
-        )
-        if uploaded_edges is not None:
-            df_edges = pd.read_csv(uploaded_edges)
-            if df_edges.shape[1] < 2:
-                st.sidebar.error("CSV musí mít alespoň dva sloupce (source, target).")
-            else:
-                col1 = st.sidebar.selectbox(
-                    "Sloupec se zdrojem (source)", df_edges.columns, index=0
-                )
-                col2 = st.sidebar.selectbox(
-                    "Sloupec s cílem (target)",
-                    df_edges.columns,
-                    index=1 if df_edges.shape[1] > 1 else 0,
-                )
-                if st.sidebar.button("Vytvořit graf z CSV edge listu"):
-                    Gc = nx.Graph()
-                    for _, row in df_edges.iterrows():
-                        u = str(row[col1])
-                        v = str(row[col2])
-                        Gc.add_edge(u, v)
-                    custom_graph = Gc
 
+        uploaded_edges = st.sidebar.file_uploader(
+            "Nahraj CSV s edge listem",
+            type="csv",
+            key="csv_edges_uploader",
+        )
+
+        if uploaded_edges is not None:
+            try:
+                df_edges = pd.read_csv(uploaded_edges)
+
+                if df_edges.shape[1] < 2:
+                    st.sidebar.error("CSV musí mít alespoň dva sloupce (source, target).")
+                else:
+                    col1 = st.sidebar.selectbox(
+                        "Sloupec se zdrojem (source)",
+                        df_edges.columns,
+                        index=0,
+                    )
+                    col2 = st.sidebar.selectbox(
+                        "Sloupec s cílem (target)",
+                        df_edges.columns,
+                        index=1 if df_edges.shape[1] > 1 else 0,
+                    )
+
+                    if st.sidebar.button("Vytvořit graf z CSV edge listu"):
+                        Gc = nx.Graph()
+                        for _, row in df_edges.iterrows():
+                            u = str(row[col1])
+                            v = str(row[col2])
+                            Gc.add_edge(u, v)
+
+                        custom_graph = Gc
+
+            except Exception as e:
+                st.sidebar.error(f"Chyba při načítání CSV: {e}")
+
+    # =========================
+    # Node + edge list CSV
+    # =========================
     elif input_mode == "Node + edge list (CSV)":
         st.sidebar.markdown("### 📂 Načtení grafu z CSV")
 
         nodes_file = st.sidebar.file_uploader(
-            "CSV – seznam vrcholů (nodes)", type="csv", key="nodes_csv"
+            "CSV – seznam vrcholů (nodes)",
+            type="csv",
+            key="nodes_csv",
         )
         edges_file = st.sidebar.file_uploader(
-            "CSV – seznam hran (edges)", type="csv", key="edges_csv"
+            "CSV – seznam hran (edges)",
+            type="csv",
+            key="edges_csv",
         )
 
         if nodes_file is not None and edges_file is not None:
-
             try:
                 nodes_df = pd.read_csv(nodes_file)
                 edges_df = pd.read_csv(edges_file)
@@ -2725,14 +2553,14 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                     col1, col2 = st.sidebar.columns(2)
 
                     with col1:
-                        source_col = st.sidebar.selectbox(
+                        source_col = col1.selectbox(
                             "Zdroj (source)",
                             edges_df.columns.tolist(),
                             key="edge_source_col",
                         )
 
                     with col2:
-                        target_col = st.sidebar.selectbox(
+                        target_col = col2.selectbox(
                             "Cíl (target)",
                             edges_df.columns.tolist(),
                             key="edge_target_col",
@@ -2749,12 +2577,16 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
 
             except Exception as e:
                 st.sidebar.error(f"Chyba při načítání CSV: {e}")
-        
-    # Uložíme, pokud jsme něco vytvořili
+
+    # =========================
+    # Uložení grafu do session
+    # =========================
     if custom_graph is not None:
         st.session_state.custom_graph = custom_graph
 
-    # Hlavní obsah pro vlastní graf
+    # =========================
+    # Hlavní obsah
+    # =========================
     st.markdown("## Vlastní HVG graf (analýza)")
     selected_sections_custom = []
 
@@ -2763,53 +2595,30 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
 
         st.markdown("### Metriky a vizualizace vlastního grafu")
 
-        n_nodes_c = Gc.number_of_nodes()
-        n_edges_c = Gc.number_of_edges()
-        degrees_c = [d for _, d in Gc.degree()]
-        avg_deg_c = float(np.mean(degrees_c)) if len(degrees_c) > 0 else 0.0
-        degree_metrics_custom = compute_degree_distribution_metrics(degrees_c)
+        metrics_custom = compute_graph_metrics(Gc)
 
+        n_nodes_c = metrics_custom["n_nodes"]
+        n_edges_c = metrics_custom["n_edges"]
+        degrees_c = metrics_custom["degrees"]
+        avg_deg_c = metrics_custom["avg_deg"]
+        C_c = metrics_custom["C"]
+        L_c = metrics_custom["L"]
+        diam_c = metrics_custom["diam"]
+        assort_c = metrics_custom["assort"]
+        L_rand_c = metrics_custom["L_rand"]
+        C_rand_c = metrics_custom["C_rand"]
+        sigma_c = metrics_custom["sigma"]
+        analyzer_c = metrics_custom["analyzer"]
+
+        degree_metrics_custom = compute_degree_distribution_metrics(degrees_c)
         unique_deg_c = degree_metrics_custom["unique_deg"]
         counts_c = degree_metrics_custom["counts"]
         pk_c = degree_metrics_custom["pk"]
         entropy_deg_c = degree_metrics_custom["entropy_deg"]
         entropy_deg_norm_c = degree_metrics_custom["entropy_deg_norm"]
-        # Clustering
-        try:
-            C_c = nx.average_clustering(Gc)
-        except Exception:
-            C_c = float("nan")
 
-        # Souvislost, délka cest, průměr
-        is_conn_c = nx.is_connected(Gc) if n_nodes_c > 0 else False
-        L_c = None
-        diam_c = None
-        if is_conn_c and n_nodes_c > 1:
-            try:
-                L_c = nx.average_shortest_path_length(Gc)
-            except Exception:
-                L_c = None
-            try:
-                diam_c = nx.diameter(Gc)
-            except Exception:
-                diam_c = None
-
-        # Náhodný graf pro porovnání
-        L_rand_c = None
-        C_rand_c = None
-        if n_nodes_c > 1 and avg_deg_c > 1:
-            try:
-                L_rand_c = np.log(n_nodes_c) / np.log(avg_deg_c)
-                C_rand_c = avg_deg_c / n_nodes_c
-            except Exception:
-                L_rand_c = None
-                C_rand_c = None
-
-        analyzer_c = SmallWorldAnalyzer(C_c, L_c, C_rand_c, L_rand_c)
-        sigma_c = analyzer_c.sigma
-
-                # =========================
-        # Konfigurační graf (null model) pro vlastní HVG
+        # =========================
+        # Konfigurační graf
         # =========================
         Gc_conf, conf_metrics_c = compute_configuration_model_metrics(Gc, seed=42)
 
@@ -2826,7 +2635,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         sigma_conf_c = conf_metrics_c["sigma"]
 
         # =========================
-        # Výběr sekcí pro vlastní HVG graf
+        # Výběr sekcí
         # =========================
         section_options_custom = [
             "Metriky HVG",
@@ -2848,7 +2657,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             ],
             key="custom_hvg_sections",
         )
-        
+
         # =========================
         # Metriky HVG
         # =========================
@@ -2892,6 +2701,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                         f"(σ > 1: small-world, σ ≈ 1: podobné náhodnému grafu, σ < 1: není small-world): "
                         f"**{sigma_c:.2f}**"
                     )
+
                     level_c, msg_c = analyzer_c.interpretation(atol=0.05)
                     if level_c == "success":
                         st.success(msg_c)
@@ -2905,7 +2715,9 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                         "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
                     )
 
+        # =========================
         # Vizualizace vlastního grafu
+        # =========================
         st.subheader("Vizuální zobrazení vlastního grafu")
 
         if n_nodes_c > 0:
@@ -2931,219 +2743,188 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             )
             st.plotly_chart(fig_custom, use_container_width=True)
         else:
-            st.info(
-                "Graf neobsahuje žádné vrcholy – zadej alespoň jeden vrchol nebo hranu."
-            )
-    else:
-        st.info("Nejprve zadej vlastní HVG graf v levém panelu (node/edge list nebo CSV).")
+            st.info("Graf neobsahuje žádné vrcholy – zadej alespoň jeden vrchol nebo hranu.")
 
         # =========================
         # Podgraf HVG
         # =========================
-    if "Podgraf HVG" in selected_sections_custom:
-        st.subheader("Podgraf HVG podle vybraných vrcholů")
+        if "Podgraf HVG" in selected_sections_custom:
+            st.subheader("Podgraf HVG podle vybraných vrcholů")
 
-        sub_nodes_text_c = st.text_input(
-            "Seznam vrcholů pro podgraf (oddělené čárkou, mezerou nebo středníkem)",
-            value="1, 2, 3",
-            key="custom_subgraph_nodes",
-        )
-
-        tokens_c = [t.strip() for t in re.split(r"[,\s;]+", sub_nodes_text_c) if t.strip() != ""]
-        available_nodes_c = {str(n): n for n in Gc.nodes()}
-        valid_nodes_c = [available_nodes_c[t] for t in tokens_c if t in available_nodes_c]
-
-        valid_nodes_c = list(dict.fromkeys(valid_nodes_c))
-
-        if len(valid_nodes_c) == 0:
-            st.info("Nebyl zadán žádný platný vrchol existující v grafu.")
-        else:
-            Gc_sub = Gc.subgraph(valid_nodes_c).copy()
-
-            st.write(
-                f"Podgraf obsahuje **{Gc_sub.number_of_nodes()}** vrcholů a **{Gc_sub.number_of_edges()}** hran."
+            sub_nodes_text_c = st.text_input(
+                "Seznam vrcholů pro podgraf (oddělené čárkou, mezerou nebo středníkem)",
+                value="1, 2, 3",
+                key="custom_subgraph_nodes",
             )
 
-            degs_sub_c = [d for _, d in Gc_sub.degree()]
-            avg_deg_sub_c = float(np.mean(degs_sub_c)) if len(degs_sub_c) > 0 else 0.0
+            tokens_c = [t.strip() for t in re.split(r"[,\s;]+", sub_nodes_text_c) if t.strip() != ""]
+            available_nodes_c = {str(n): n for n in Gc.nodes()}
+            valid_nodes_c = [available_nodes_c[t] for t in tokens_c if t in available_nodes_c]
+            valid_nodes_c = list(dict.fromkeys(valid_nodes_c))
 
-            try:
-                C_sub_c = nx.average_clustering(Gc_sub)
-            except Exception:
-                C_sub_c = float('nan')
-
-            is_conn_sub_c = nx.is_connected(Gc_sub) if Gc_sub.number_of_nodes() > 0 else False
-            L_sub_c = None
-            diam_sub_c = None
-
-            if is_conn_sub_c and Gc_sub.number_of_nodes() > 1:
-                try:
-                    L_sub_c = nx.average_shortest_path_length(Gc_sub)
-                except Exception:
-                    L_sub_c = None
-                try:
-                    diam_sub_c = nx.diameter(Gc_sub)
-                except Exception:
-                    diam_sub_c = None
-
-            st.write(f"- Průměrný stupeň v podgrafu: **{avg_deg_sub_c:.3f}**")
-            st.write(f"- Clustering v podgrafu: **{C_sub_c:.3f}**")
-            if L_sub_c is not None:
-                st.write(f"- Průměrná délka cesty v podgrafu: **{L_sub_c:.3f}**")
-            if diam_sub_c is not None:
-                st.write(f"- Průměr podgrafu: **{diam_sub_c}**")
-
-            pos_sub_c = compute_graph_layout(Gc_sub, layout_type="spring", seed=42)
-
-            edge_trace_sub_c, node_trace_sub_c = prepare_network_traces(
-                Gc_sub,
-                pos_sub_c,
-                node_color="lightcoral",
-                node_size=10,
-                edge_color="#888",
-                edge_width=1,
-                show_labels=True,
-                hover_texts=[f"Vrchol: {n}" for n in Gc_sub.nodes()],
-            )
-
-            fig_sub_c = go.Figure(data=[edge_trace_sub_c, node_trace_sub_c])
-            fig_sub_c.update_layout(
-                title="Podgraf vlastního HVG grafu",
-                showlegend=False,
-                hovermode="closest",
-                margin=dict(b=20, l=5, r=5, t=40),
-            )
-            st.plotly_chart(fig_sub_c, use_container_width=True)
-
-    # =========================
-    # Rozdělení stupňů + power-law
-    # =========================
-    if "Rozdělení stupňů + power-law" in selected_sections_custom:
-        st.subheader("Rozdělení stupňů vlastního HVG grafu")
-
-        degs_c = degrees_c
-        unique_deg_c, counts_c = np.unique(degs_c, return_counts=True)
-        pk_c = counts_c / counts_c.sum()
-
-        entropy_deg_c = -np.sum(pk_c * np.log(pk_c)) if len(pk_c) > 0 else 0.0
-
-        if len(unique_deg_c) > 1:
-            entropy_deg_norm_c = entropy_deg_c / np.log(len(unique_deg_c))
-        else:
-            entropy_deg_norm_c = 0.0
-
-        entropy_level_c, entropy_text_c = classify_entropy_level(entropy_deg_norm_c)
-
-        col_deg_c1, col_deg_c2, col_deg_c3, col_deg_c4, col_deg_c5 = st.columns(5)
-        with col_deg_c1:
-            st.metric("Průměrný stupeň", f"{np.mean(degs_c):.3f}")
-        with col_deg_c2:
-            st.metric("Medián stupně", f"{np.median(degs_c):.3f}")
-        with col_deg_c3:
-            st.metric("Maximální stupeň", f"{np.max(degs_c)}")
-        with col_deg_c4:
-            st.metric("Shannonova entropie", f"{entropy_deg_c:.3f}")
-        with col_deg_c5:
-            st.metric("Norm. entropie", f"{entropy_deg_norm_c:.3f}")
-            st.caption(entropy_level_c)
-
-        st.info(
-            f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm_c:.3f}**, "
-            f"což odpovídá kategorii **{entropy_level_c}**. {entropy_text_c}"
-        )
-
-        fig_hist_c = create_degree_histogram_figure(
-            degs_c,
-            title="Histogram stupňů",
-        )
-        st.plotly_chart(fig_hist_c, use_container_width=True)
-
-        fig_pdf_c = create_degree_pdf_figure(
-            unique_deg_c,
-            pk_c,
-            title="PDF stupňového rozdělení P(k)",
-        )
-        st.plotly_chart(fig_pdf_c, use_container_width=True)
-
-        st.subheader("CDF stupňového rozdělení")
-        cdf_vals_c = np.cumsum(pk_c)
-        df_cdf_c = pd.DataFrame({"degree": unique_deg_c, "cdf": cdf_vals_c})
-        fig_cdf_c = px.line(
-            df_cdf_c,
-            x="degree",
-            y="cdf",
-            markers=True,
-            title="CDF stupňového rozdělení F(k)",
-            labels={"degree": "Stupeň k", "cdf": "F(k) = P(K ≤ k)"},
-        )
-        fig_cdf_c.update_layout(
-            xaxis_title="Stupeň k",
-            yaxis_title="Kumulativní pravděpodobnost F(k)",
-            yaxis_range=[0, 1.05],
-        )
-        st.plotly_chart(fig_cdf_c, use_container_width=True)
-
-        do_powerlaw_custom = st.checkbox(
-            "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
-            key="powerlaw_custom_global",
-        )
-
-        powerlaw_p_result_c = None
-        powerlaw_R_result_c = None
-        alpha_powerlaw_c = None
-        xmin_powerlaw_c = None
-
-        if do_powerlaw_custom:
-            if not HAS_POWERLAW:
-                st.warning(
-                    "K provedení testu je potřeba balík `powerlaw`. "
-                    "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
-                )
+            if len(valid_nodes_c) == 0:
+                st.info("Nebyl zadán žádný platný vrchol existující v grafu.")
             else:
-                degs_for_fit_c = np.array([d for d in degs_c if d > 0])
+                Gc_sub = Gc.subgraph(valid_nodes_c).copy()
 
-                if len(degs_for_fit_c) < 10:
-                    st.info("Graf má příliš málo vrcholů pro smysluplný power-law fit.")
-                else:
+                st.write(
+                    f"Podgraf obsahuje **{Gc_sub.number_of_nodes()}** vrcholů a **{Gc_sub.number_of_edges()}** hran."
+                )
+
+                degs_sub_c = [d for _, d in Gc_sub.degree()]
+                avg_deg_sub_c = float(np.mean(degs_sub_c)) if len(degs_sub_c) > 0 else 0.0
+
+                try:
+                    C_sub_c = nx.average_clustering(Gc_sub)
+                except Exception:
+                    C_sub_c = float("nan")
+
+                is_conn_sub_c = nx.is_connected(Gc_sub) if Gc_sub.number_of_nodes() > 0 else False
+                L_sub_c = None
+                diam_sub_c = None
+
+                if is_conn_sub_c and Gc_sub.number_of_nodes() > 1:
                     try:
-                        import powerlaw
+                        L_sub_c = nx.average_shortest_path_length(Gc_sub)
+                    except Exception:
+                        L_sub_c = None
+                    try:
+                        diam_sub_c = nx.diameter(Gc_sub)
+                    except Exception:
+                        diam_sub_c = None
 
-                        fit_c = powerlaw.Fit(
-                            degs_for_fit_c,
-                            discrete=True,
-                            verbose=False,
-                        )
+                st.write(f"- Průměrný stupeň v podgrafu: **{avg_deg_sub_c:.3f}**")
+                st.write(f"- Clustering v podgrafu: **{C_sub_c:.3f}**")
+                if L_sub_c is not None:
+                    st.write(f"- Průměrná délka cesty v podgrafu: **{L_sub_c:.3f}**")
+                if diam_sub_c is not None:
+                    st.write(f"- Průměr podgrafu: **{diam_sub_c}**")
 
-                        alpha_powerlaw_c = fit_c.power_law.alpha
-                        xmin_powerlaw_c = fit_c.power_law.xmin
+                pos_sub_c = compute_graph_layout(Gc_sub, layout_type="spring", seed=42)
 
-                        R_c, p_c = fit_c.distribution_compare(
-                            "power_law", "exponential"
-                        )
+                edge_trace_sub_c, node_trace_sub_c = prepare_network_traces(
+                    Gc_sub,
+                    pos_sub_c,
+                    node_color="lightcoral",
+                    node_size=10,
+                    edge_color="#888",
+                    edge_width=1,
+                    show_labels=True,
+                    hover_texts=[f"Vrchol: {n}" for n in Gc_sub.nodes()],
+                )
 
-                        powerlaw_R_result_c = R_c
-                        powerlaw_p_result_c = p_c
+                fig_sub_c = go.Figure(data=[edge_trace_sub_c, node_trace_sub_c])
+                fig_sub_c.update_layout(
+                    title="Podgraf vlastního HVG grafu",
+                    showlegend=False,
+                    hovermode="closest",
+                    margin=dict(b=20, l=5, r=5, t=40),
+                )
+                st.plotly_chart(fig_sub_c, use_container_width=True)
+
+        # =========================
+        # Rozdělení stupňů + power-law
+        # =========================
+        if "Rozdělení stupňů + power-law" in selected_sections_custom:
+            st.subheader("Rozdělení stupňů vlastního HVG grafu")
+
+            degs_c = degrees_c
+            unique_deg_c = degree_metrics_custom["unique_deg"]
+            pk_c = degree_metrics_custom["pk"]
+            entropy_deg_c = degree_metrics_custom["entropy_deg"]
+            entropy_deg_norm_c = degree_metrics_custom["entropy_deg_norm"]
+
+            entropy_level_c, entropy_text_c = classify_entropy_level(entropy_deg_norm_c)
+
+            col_deg_c1, col_deg_c2, col_deg_c3, col_deg_c4, col_deg_c5 = st.columns(5)
+            with col_deg_c1:
+                st.metric("Průměrný stupeň", f"{np.mean(degs_c):.3f}")
+            with col_deg_c2:
+                st.metric("Medián stupně", f"{np.median(degs_c):.3f}")
+            with col_deg_c3:
+                st.metric("Maximální stupeň", f"{np.max(degs_c)}")
+            with col_deg_c4:
+                st.metric("Shannonova entropie", f"{entropy_deg_c:.3f}")
+            with col_deg_c5:
+                st.metric("Norm. entropie", f"{entropy_deg_norm_c:.3f}")
+                st.caption(entropy_level_c)
+
+            st.info(
+                f"Normalizovaná entropie stupňového rozdělení je **{entropy_deg_norm_c:.3f}**, "
+                f"což odpovídá kategorii **{entropy_level_c}**. {entropy_text_c}"
+            )
+
+            fig_hist_c = create_degree_histogram_figure(
+                degs_c,
+                title="Histogram stupňů",
+            )
+            st.plotly_chart(fig_hist_c, use_container_width=True)
+
+            fig_pdf_c = create_degree_pdf_figure(
+                unique_deg_c,
+                pk_c,
+                title="PDF stupňového rozdělení P(k)",
+            )
+            st.plotly_chart(fig_pdf_c, use_container_width=True)
+
+            st.subheader("CDF stupňového rozdělení")
+            cdf_vals_c = np.cumsum(pk_c)
+            fig_cdf_c = create_degree_cdf_figure(
+                unique_deg_c,
+                cdf_vals_c,
+                title="CDF stupňového rozdělení F(k)",
+            )
+            st.plotly_chart(fig_cdf_c, use_container_width=True)
+
+            do_powerlaw_custom = st.checkbox(
+                "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
+                key="powerlaw_custom_global",
+            )
+
+            powerlaw_p_result_c = None
+            powerlaw_R_result_c = None
+            alpha_powerlaw_c = None
+            xmin_powerlaw_c = None
+
+            if do_powerlaw_custom:
+                if not HAS_POWERLAW:
+                    st.warning(
+                        "K provedení testu je potřeba balík `powerlaw`. "
+                        "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
+                    )
+                else:
+                    result_c = compute_powerlaw_fit(degs_c, has_powerlaw=HAS_POWERLAW)
+
+                    if not result_c["success"]:
+                        if result_c["reason"] == "Příliš málo hodnot pro smysluplný fit.":
+                            st.info("Graf má příliš málo vrcholů pro smysluplný power-law fit.")
+                        else:
+                            st.info(
+                                f"Power-law test se nepodařilo spolehlivě vyhodnotit: {result_c['reason']}"
+                            )
+                    else:
+                        alpha_powerlaw_c = result_c["alpha"]
+                        xmin_powerlaw_c = result_c["xmin"]
+                        powerlaw_R_result_c = result_c["R"]
+                        powerlaw_p_result_c = result_c["p"]
 
                         st.markdown("**Výsledek power-law analýzy:**")
                         st.write(f"- Odhadnutý exponent α: **{alpha_powerlaw_c:.3f}**")
                         st.write(f"- Odhadnuté k_min: **{xmin_powerlaw_c}**")
-                        st.write(f"- Likelihood ratio R: **{R_c:.3f}**")
-                        st.write(f"- p-hodnota: **{p_c:.3f}**")
+                        st.write(f"- Likelihood ratio R: **{powerlaw_R_result_c:.3f}**")
+                        st.write(f"- p-hodnota: **{powerlaw_p_result_c:.3f}**")
 
-                        if p_c < 0.1:
-                            if R_c > 0:
+                        if powerlaw_p_result_c < 0.1:
+                            if powerlaw_R_result_c > 0:
                                 st.success(
                                     "Graf je kompatibilní s power-law a power-law je preferovaný oproti exponenciálnímu rozdělení."
                                 )
                             else:
-                                st.warning(
-                                    "Power-law model je horší než exponenciální rozdělení."
-                                )
+                                st.warning("Power-law model je horší než exponenciální rozdělení.")
                         else:
-                            st.info(
-                                "Test je neprůkazný. Nelze spolehlivě rozhodnout."
-                            )
+                            st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
 
+                        degs_for_fit_c = result_c["degrees_for_fit"]
                         unique_sorted_c = np.sort(np.unique(degs_for_fit_c))
                         ccdf_vals_c = np.array(
                             [
@@ -3191,226 +2972,247 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                         else:
                             st.info("Tail rozdělení je příliš krátký na smysluplný CCDF graf.")
 
-                    except Exception as e:
-                        st.info(f"Power-law test se nepodařilo spolehlivě vyhodnotit: {e}")
-                        
-    # =========================
-    # Konfigurační graf (null model)
-    # =========================
-    if "Konfigurační graf (null model)" in selected_sections_custom:
-        st.subheader("Konfigurační graf (null model)")
+        # =========================
+        # Konfigurační graf
+        # =========================
+        if "Konfigurační graf (null model)" in selected_sections_custom:
+            st.subheader("Konfigurační graf (null model)")
 
-        col_conf_c1, col_conf_c2 = st.columns(2)
+            col_conf_c1, col_conf_c2 = st.columns(2)
 
-        with col_conf_c1:
-            st.markdown("**Konfigurační graf – základní metriky**")
-            st.write(f"- Počet vrcholů: **{n_nodes_conf_c}**")
-            st.write(f"- Počet hran: **{n_edges_conf_c}**")
-            st.write(f"- Průměrný stupeň: **{avg_deg_conf_c:.3f}**")
-            if L_conf_c is not None:
-                st.write(f"- Průměrná délka cesty L_conf: **{L_conf_c:.3f}**")
-            else:
-                st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
-            if diam_conf_c is not None:
-                st.write(f"- Průměr grafu (diameter_conf): **{diam_conf_c}**")
-            else:
-                st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
+            with col_conf_c1:
+                st.markdown("**Konfigurační graf – základní metriky**")
+                st.write(f"- Počet vrcholů: **{n_nodes_conf_c}**")
+                st.write(f"- Počet hran: **{n_edges_conf_c}**")
+                st.write(f"- Průměrný stupeň: **{avg_deg_conf_c:.3f}**")
+                if L_conf_c is not None:
+                    st.write(f"- Průměrná délka cesty L_conf: **{L_conf_c:.3f}**")
+                else:
+                    st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
+                if diam_conf_c is not None:
+                    st.write(f"- Průměr grafu (diameter_conf): **{diam_conf_c}**")
+                else:
+                    st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
 
-        with col_conf_c2:
-            st.markdown("**Konfigurační graf – clustering, assortativita, σ_conf**")
-            st.write(f"- Clustering coefficient C_conf: **{C_conf_c:.3f}**")
-            if assort_conf_c is not None and not np.isnan(assort_conf_c):
-                st.write(f"- Degree assortativity_conf: **{assort_conf_c:.3f}**")
-            else:
-                st.write("- Degree assortativity_conf: *není k dispozici*")
+            with col_conf_c2:
+                st.markdown("**Konfigurační graf – clustering, assortativita, σ_conf**")
+                st.write(f"- Clustering coefficient C_conf: **{C_conf_c:.3f}**")
+                if assort_conf_c is not None and not np.isnan(assort_conf_c):
+                    st.write(f"- Degree assortativity_conf: **{assort_conf_c:.3f}**")
+                else:
+                    st.write("- Degree assortativity_conf: *není k dispozici*")
 
-            if L_rand_conf_c is not None and C_rand_conf_c is not None and C_rand_conf_c != 0:
+                if L_rand_conf_c is not None and C_rand_conf_c is not None and C_rand_conf_c != 0:
+                    st.write(
+                        "- Náhodný graf pro konfigurační model (odhad):  \n"
+                        f"  - L_rand_conf ≈ **{L_rand_conf_c:.3f}**  \n"
+                        f"  - C_rand_conf ≈ **{C_rand_conf_c:.5f}**"
+                    )
+                else:
+                    st.write("- L_rand_conf, C_rand_conf: *nelze odhadnout*")
+
+                if sigma_conf_c is not None and not np.isnan(sigma_conf_c):
+                    st.write(f"- Small-world index σ_conf: **{sigma_conf_c:.2f}**")
+
+            st.markdown("**Porovnání vlastního HVG grafu vs. konfigurační graf**")
+
+            if not np.isnan(C_c) and not np.isnan(C_conf_c):
                 st.write(
-                    "- Náhodný graf pro konfigurační model (odhad):  \n"
-                    f"  - L_rand_conf ≈ **{L_rand_conf_c:.3f}**  \n"
-                    f"  - C_rand_conf ≈ **{C_rand_conf_c:.5f}**"
+                    f"- Clustering HVG: **{C_c:.3f}**, konfigurační graf C_conf: **{C_conf_c:.3f}**"
+                )
+
+            if (L_c is not None) and (L_conf_c is not None):
+                st.write(
+                    f"- Průměrná délka cesty L (HVG): **{L_c:.3f}**, L_conf: **{L_conf_c:.3f}**"
+                )
+
+            if sigma_c is not None and sigma_conf_c is not None:
+                st.write(
+                    f"- Small-world index HVG: **{sigma_c:.2f}**, konfigurační graf σ_conf: **{sigma_conf_c:.2f}**"
+                )
+
+            st.subheader("Konfigurační graf (vizualizace)")
+            pos_conf_c = compute_graph_layout(Gc_conf, layout_type="spring", seed=42)
+
+            edge_trace_conf_c, node_trace_conf_c = prepare_network_traces(
+                Gc_conf,
+                pos_conf_c,
+                node_color="lightgreen",
+                node_size=8,
+                edge_color="#aaa",
+                edge_width=1,
+                show_labels=False,
+                hover_texts=[f"Vrchol: {n}" for n in Gc_conf.nodes()],
+            )
+
+            fig_conf_c = go.Figure(data=[edge_trace_conf_c, node_trace_conf_c])
+            fig_conf_c.update_layout(
+                title="Konfigurační graf se stejnou stupňovou posloupností jako vlastní HVG graf",
+                showlegend=False,
+                hovermode="closest",
+                margin=dict(b=20, l=5, r=5, t=40),
+            )
+            st.plotly_chart(fig_conf_c, use_container_width=True)
+
+        # =========================
+        # Shrnutí analýzy
+        # =========================
+        if "Shrnutí analýzy" in selected_sections_custom:
+            st.subheader("Shrnutí analýzy")
+
+            col_sum_c1, col_sum_c2, col_sum_c3 = st.columns(3)
+
+            with col_sum_c1:
+                st.metric("Počet vrcholů", n_nodes_c)
+                st.metric("Počet hran", n_edges_c)
+
+            with col_sum_c2:
+                st.metric("Průměrný stupeň", f"{avg_deg_c:.3f}")
+                st.metric("Clustering", f"{C_c:.3f}" if not np.isnan(C_c) else "N/A")
+
+            with col_sum_c3:
+                st.metric("Průměrná délka cesty", f"{L_c:.3f}" if L_c is not None else "N/A")
+                st.metric(
+                    "Small-world index σ",
+                    f"{sigma_c:.2f}" if sigma_c is not None and not np.isnan(sigma_c) else "N/A"
+                )
+
+            technical_parts_c = []
+            interpretation_parts_c = []
+            verdict_parts_c = []
+
+            technical_parts_c.append(
+                f"Graf obsahuje {n_nodes_c} vrcholů a {n_edges_c} hran, přičemž průměrný stupeň vrcholu je {avg_deg_c:.3f}."
+            )
+
+            if C_c is not None and not np.isnan(C_c):
+                if C_c >= 0.4:
+                    technical_parts_c.append("Graf vykazuje vyšší lokální propojenost.")
+                elif C_c >= 0.2:
+                    technical_parts_c.append("Graf vykazuje střední lokální propojenost.")
+                else:
+                    technical_parts_c.append("Graf má nízkou lokální propojenost.")
+
+            if L_c is not None:
+                technical_parts_c.append(f"Průměrná délka cesty je {L_c:.3f}.")
+
+            if sigma_c is not None and not np.isnan(sigma_c):
+                if sigma_c > 1.1:
+                    interpretation_parts_c.append("Graf vykazuje výraznější small-world charakter.")
+                elif sigma_c >= 0.9:
+                    interpretation_parts_c.append("Graf je svým small-world charakterem blízký náhodnému grafu.")
+                else:
+                    interpretation_parts_c.append("Graf nevykazuje výrazný small-world charakter.")
+
+            if entropy_deg_norm_c < 0.35:
+                interpretation_parts_c.append(
+                    "Stupňové rozdělení je spíše koncentrované a graf působí strukturálně pravidelněji."
+                )
+            elif entropy_deg_norm_c < 0.65:
+                interpretation_parts_c.append(
+                    "Stupňové rozdělení je středně variabilní a graf kombinuje pravidelnost i heterogenitu."
                 )
             else:
-                st.write("- L_rand_conf, C_rand_conf: *nelze odhadnout*")
+                interpretation_parts_c.append(
+                    "Stupňové rozdělení je výrazně variabilní a graf působí heterogenněji."
+                )
 
-            if sigma_conf_c is not None and not np.isnan(sigma_conf_c):
-                st.write(f"- Small-world index σ_conf: **{sigma_conf_c:.2f}**")
-
-        st.markdown("**Porovnání vlastního HVG grafu vs. konfigurační graf**")
-
-        if not np.isnan(C_c) and not np.isnan(C_conf_c):
-            st.write(
-                f"- Clustering HVG: **{C_c:.3f}**, konfigurační graf C_conf: **{C_conf_c:.3f}**"
-            )
-
-        if (L_c is not None) and (L_conf_c is not None):
-            st.write(
-                f"- Průměrná délka cesty L (HVG): **{L_c:.3f}**, L_conf: **{L_conf_c:.3f}**"
-            )
-
-        if sigma_c is not None and sigma_conf_c is not None:
-            st.write(
-                f"- Small-world index HVG: **{sigma_c:.2f}**, konfigurační graf σ_conf: **{sigma_conf_c:.2f}**"
-            )
-
-        st.subheader("Konfigurační graf (vizualizace)")
-        pos_conf_c = compute_graph_layout(Gc_conf, layout_type="spring", seed=42)
-
-        edge_trace_conf_c, node_trace_conf_c = prepare_network_traces(
-            Gc_conf,
-            pos_conf_c,
-            node_color="lightgreen",
-            node_size=8,
-            edge_color="#aaa",
-            edge_width=1,
-            show_labels=False,
-            hover_texts=[f"Vrchol: {n}" for n in Gc_conf.nodes()],
-        )
-
-        fig_conf_c = go.Figure(data=[edge_trace_conf_c, node_trace_conf_c])
-        fig_conf_c.update_layout(
-            title="Konfigurační graf se stejnou stupňovou posloupností jako vlastní HVG graf",
-            showlegend=False,
-            hovermode="closest",
-            margin=dict(b=20, l=5, r=5, t=40),
-        )
-        st.plotly_chart(fig_conf_c, use_container_width=True)
-    # =========================
-    # Shrnutí analýzy
-    # =========================
-    if "Shrnutí analýzy" in selected_sections_custom:
-        st.subheader("Shrnutí analýzy")
-
-        col_sum_c1, col_sum_c2, col_sum_c3 = st.columns(3)
-
-        with col_sum_c1:
-            st.metric("Počet vrcholů", n_nodes_c)
-            st.metric("Počet hran", n_edges_c)
-
-        with col_sum_c2:
-            st.metric("Průměrný stupeň", f"{avg_deg_c:.3f}")
-            st.metric("Clustering", f"{C_c:.3f}" if not np.isnan(C_c) else "N/A")
-
-        with col_sum_c3:
-            st.metric("Průměrná délka cesty", f"{L_c:.3f}" if L_c is not None else "N/A")
-            st.metric(
-                "Small-world index σ",
-                f"{sigma_c:.2f}" if sigma_c is not None and not np.isnan(sigma_c) else "N/A"
-            )
-
-        technical_parts_c = []
-        interpretation_parts_c = []
-        verdict_parts_c = []
-
-        technical_parts_c.append(
-            f"Graf obsahuje {n_nodes_c} vrcholů a {n_edges_c} hran, přičemž průměrný stupeň vrcholu je {avg_deg_c:.3f}."
-        )
-
-        if C_c is not None and not np.isnan(C_c):
-            if C_c >= 0.4:
-                technical_parts_c.append("Graf vykazuje vyšší lokální propojenost.")
-            elif C_c >= 0.2:
-                technical_parts_c.append("Graf vykazuje střední lokální propojenost.")
+            if sigma_c is not None and not np.isnan(sigma_c) and C_c is not None and not np.isnan(C_c):
+                if sigma_c > 1.1 and C_c >= 0.3:
+                    verdict_parts_c.append(
+                        "Celkově graf vykazuje organizovanější a strukturálně výraznější topologii."
+                    )
+                elif sigma_c < 1 and C_c < 0.2:
+                    verdict_parts_c.append(
+                        "Celkově graf působí méně strukturovaně a je bližší náhodnému charakteru."
+                    )
+                else:
+                    verdict_parts_c.append(
+                        "Celkově graf vykazuje středně výraznou strukturu bez jednoznačně extrémního charakteru."
+                    )
             else:
-                technical_parts_c.append("Graf má nízkou lokální propojenost.")
+                verdict_parts_c.append(
+                    "Pro tento graf nelze na základě dostupných metrik jednoznačně posoudit celkový charakter struktury."
+                )
 
-        if L_c is not None:
-            technical_parts_c.append(
-                f"Průměrná délka cesty je {L_c:.3f}."
-            )
+            st.markdown("**Technické shrnutí**")
+            st.info(" ".join(technical_parts_c))
 
-        if sigma_c is not None and not np.isnan(sigma_c):
-            if sigma_c > 1.1:
-                interpretation_parts_c.append("Graf vykazuje výraznější small-world charakter.")
-            elif sigma_c >= 0.9:
-                interpretation_parts_c.append("Graf je svým small-world charakterem blízký náhodnému grafu.")
+            st.markdown("**Interpretace grafu**")
+            if interpretation_parts_c:
+                st.write(" ".join(interpretation_parts_c))
             else:
-                interpretation_parts_c.append("Graf nevykazuje výrazný small-world charakter.")
+                st.write("Interpretaci grafu zatím nelze jednoznačně formulovat z dostupných metrik.")
 
-        if entropy_deg_norm_c < 0.35:
-            interpretation_parts_c.append("Stupňové rozdělení je spíše koncentrované a graf působí strukturálně pravidelněji.")
-        elif entropy_deg_norm_c < 0.65:
-            interpretation_parts_c.append("Stupňové rozdělení je středně variabilní a graf kombinuje pravidelnost i heterogenitu.")
-        else:
-            interpretation_parts_c.append("Stupňové rozdělení je výrazně variabilní a graf působí heterogenněji.")
-
-        if sigma_c is not None and not np.isnan(sigma_c) and C_c is not None and not np.isnan(C_c):
-            if sigma_c > 1.1 and C_c >= 0.3:
-                verdict_parts_c.append("Celkově graf vykazuje organizovanější a strukturálně výraznější topologii.")
-            elif sigma_c < 1 and C_c < 0.2:
-                verdict_parts_c.append("Celkově graf působí méně strukturovaně a je bližší náhodnému charakteru.")
+            st.markdown("**Závěrečný verdikt**")
+            if verdict_parts_c:
+                st.success(" ".join(verdict_parts_c))
             else:
-                verdict_parts_c.append("Celkově graf vykazuje středně výraznou strukturu bez jednoznačně extrémního charakteru.")
+                st.info("Pro tento graf zatím nelze vytvořit jednoznačný závěrečný verdikt.")
 
-        st.markdown("**Technické shrnutí**")
-        st.info(" ".join(technical_parts_c))
+        # =========================
+        # Export HVG a metrik
+        # =========================
+        if "Export HVG a metrik" in selected_sections_custom:
+            st.subheader("Export HVG a metrik")
 
-        st.markdown("**Interpretace grafu**")
-        st.write(" ".join(interpretation_parts_c))
+            edges_df_c = pd.DataFrame(list(Gc.edges()), columns=["source", "target"])
+            edges_csv_c = edges_df_c.to_csv(index=False).encode("utf-8")
 
-        st.markdown("**Závěrečný verdikt**")
-        st.success(" ".join(verdict_parts_c))
+            adj_df_c = nx.to_pandas_adjacency(Gc)
+            adj_csv_c = adj_df_c.to_csv().encode("utf-8")
 
-    # =========================
-    # Export HVG a metrik
-    # =========================
-    if "Export HVG a metrik" in selected_sections_custom:
-        st.subheader("Export HVG a metrik")
+            metrics_dict_c = {
+                "n_nodes": n_nodes_c,
+                "n_edges": n_edges_c,
+                "avg_degree": avg_deg_c,
+                "C": C_c,
+                "L": L_c,
+                "diameter": diam_c,
+                "L_rand": L_rand_c,
+                "C_rand": C_rand_c,
+                "sigma": sigma_c,
+                "entropy_deg": entropy_deg_c,
+                "entropy_deg_norm": entropy_deg_norm_c,
+                "sigma_conf": sigma_conf_c,
+            }
 
-        edges_df_c = pd.DataFrame(list(Gc.edges()), columns=["source", "target"])
-        edges_csv_c = edges_df_c.to_csv(index=False).encode("utf-8")
+            metrics_df_c = pd.DataFrame([metrics_dict_c])
+            metrics_csv_c = metrics_df_c.to_csv(index=False).encode("utf-8")
 
-        adj_df_c = nx.to_pandas_adjacency(Gc)
-        adj_csv_c = adj_df_c.to_csv().encode("utf-8")
+            col_exp_c1, col_exp_c2, col_exp_c3 = st.columns(3)
 
-        metrics_dict_c = {
-            "n_nodes": n_nodes_c,
-            "n_edges": n_edges_c,
-            "avg_degree": avg_deg_c,
-            "C": C_c,
-            "L": L_c,
-            "diameter": diam_c,
-            "L_rand": L_rand_c,
-            "C_rand": C_rand_c,
-            "sigma": sigma_c,
-            "entropy_deg": entropy_deg_c,
-            "entropy_deg_norm": entropy_deg_norm_c,
-            "sigma_conf": sigma_conf_c,
-        }
+            with col_exp_c1:
+                st.download_button(
+                    "Exportovat HVG jako edge list (CSV)",
+                    data=edges_csv_c,
+                    file_name="custom_hvg_edgelist.csv",
+                    mime="text/csv",
+                )
 
-        metrics_df_c = pd.DataFrame([metrics_dict_c])
-        metrics_csv_c = metrics_df_c.to_csv(index=False).encode("utf-8")
+            with col_exp_c2:
+                st.download_button(
+                    "Exportovat HVG jako adjacency matrix (CSV)",
+                    data=adj_csv_c,
+                    file_name="custom_hvg_adjacency.csv",
+                    mime="text/csv",
+                )
 
-        col_exp_c1, col_exp_c2, col_exp_c3 = st.columns(3)
+            with col_exp_c3:
+                st.download_button(
+                    "Exportovat metriky HVG (CSV)",
+                    data=metrics_csv_c,
+                    file_name="custom_hvg_metrics.csv",
+                    mime="text/csv",
+                )
 
-        with col_exp_c1:
-            st.download_button(
-                "Exportovat HVG jako edge list (CSV)",
-                data=edges_csv_c,
-                file_name="custom_hvg_edgelist.csv",
-                mime="text/csv",
-            )
-
-        with col_exp_c2:
-            st.download_button(
-                "Exportovat HVG jako adjacency matrix (CSV)",
-                data=adj_csv_c,
-                file_name="custom_hvg_adjacency.csv",
-                mime="text/csv",
-            )
-
-        with col_exp_c3:
-            st.download_button(
-                "Exportovat metriky HVG (CSV)",
-                data=metrics_csv_c,
-                file_name="custom_hvg_metrics.csv",
-                mime="text/csv",
-            )                            
+    else:
+        st.info("Nejprve zadej vlastní HVG graf v levém panelu (node/edge list nebo CSV).")
 # =====================================================================
 #  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
 # =====================================================================
 
-else:  # "Porovnat dvě časové řady"
+elif analysis_mode == "Porovnat dvě časové řady":
     st.markdown("## Porovnání dvou časových řad a jejich HVG")
 
     if st.session_state.data is None:
@@ -3424,9 +3226,7 @@ else:  # "Porovnat dvě časové řady"
         # =============================
         data1 = st.session_state.data
 
-
-        # HVG pro sérii 1
-        G1 = build_hvg(data1)
+        G1 = build_hvg_cached(data1)
         metrics1 = compute_graph_metrics(G1)
 
         n1 = metrics1["n_nodes"]
@@ -3440,49 +3240,43 @@ else:  # "Porovnat dvě časové řady"
         L_rand1 = metrics1["L_rand"]
         C_rand1 = metrics1["C_rand"]
         sigma1 = metrics1["sigma"]
+        analyzer1 = metrics1["analyzer"]
 
         degree_metrics_1 = compute_degree_distribution_metrics(degs1)
-
         unique_deg1_main = degree_metrics_1["unique_deg"]
         counts1_main = degree_metrics_1["counts"]
         pk1_main = degree_metrics_1["pk"]
         entropy_deg1 = degree_metrics_1["entropy_deg"]
         entropy_deg_norm1 = degree_metrics_1["entropy_deg_norm"]
 
-        analyzer1 = SmallWorldAnalyzer(C1, L1, C_rand1, L_rand1)
         powerlaw_p_result_1 = None
         powerlaw_R_result_1 = None
-        G1_conf = build_configuration_graph_from_hvg(G1, seed=42)
-        metrics1c = compute_graph_metrics(G1_conf)
 
-        n1c = metrics1c["n_nodes"]
-        m1c = metrics1c["n_edges"]
-        degs1c = metrics1c["degrees"]
-        avg_deg1c = metrics1c["avg_deg"]
-        C1c = metrics1c["C"]
-        L1c = metrics1c["L"]
-        diam1c = metrics1c["diam"]
-        assort1c = metrics1c["assort"]
-        L_rand1c = metrics1c["L_rand"]
-        C_rand1c = metrics1c["C_rand"]
-        sigma1c = metrics1c["sigma"]        
-        # =============================
-        # =============================
-        # Sidebar – nastavení série 2
-        # =============================
-        st.sidebar.subheader("Nastavení časové řady – Série 2")
+        G1_conf = None
+        conf_metrics1 = None
+        n1c = None
+        m1c = None
+        degs1c = None
+        avg_deg1c = None
+        C1c = None
+        L1c = None
+        diam1c = None
+        assort1c = None
+        L_rand1c = None
+        C_rand1c = None
+        sigma1c = None
 
-        mode2 = st.sidebar.radio(
-            "Typ vstupu",
-            ["Standardní signály", "Chaotické generátory", "Nahrát CSV"],
-            key="mode_series_2",
-        )
-
+        # =============================
+        # Bezpečné výchozí hodnoty pro sérii 2
+        # =============================
+        mode2 = None
         typ2 = None
         chaos_typ2 = None
         data2_candidate = None
         meta2 = None
 
+        file2 = None
+        df2_preview = None
         selected_column2 = None
         normalize_csv2 = False
         aggregation_freq_cmp = "bez agregace"
@@ -3494,7 +3288,17 @@ else:  # "Porovnat dvě časové řady"
         csv2_datetime_column = "Žádný"
         selection_mode_cmp = "index"
         csv2_has_header = True
-        file2 = None
+
+        # =============================
+        # Sidebar – nastavení série 2
+        # =============================
+        st.sidebar.subheader("Nastavení časové řady – Série 2")
+
+        mode2 = st.sidebar.radio(
+            "Typ vstupu",
+            ["Standardní signály", "Chaotické generátory", "Nahrát CSV"],
+            key="mode_series_2",
+        )
 
         # -----------------------------
         # Standardní signály – Série 2
@@ -3514,16 +3318,30 @@ else:  # "Porovnat dvě časové řady"
             if typ2 == "Náhodná uniformní":
                 length2 = st.sidebar.slider("Délka řady", 10, 5000, 50, key="len_uni_2")
                 low2 = st.sidebar.number_input(
-                    "Minimální hodnota", value=0.0, step=0.1, key="low_uni_2"
+                    "Minimální hodnota",
+                    value=0.0,
+                    step=0.1,
+                    key="low_uni_2",
                 )
                 high2 = st.sidebar.number_input(
-                    "Maximální hodnota", value=1.0, step=0.1, key="high_uni_2"
+                    "Maximální hodnota",
+                    value=1.0,
+                    step=0.1,
+                    key="high_uni_2",
                 )
 
             elif typ2 == "Náhodná normální":
                 length2 = st.sidebar.slider("Délka řady", 10, 5000, 50, key="len_norm_2")
-                mu2 = st.sidebar.number_input("Střední hodnota μ", value=0.0, key="mu_norm_2")
-                sigma2 = st.sidebar.number_input("Směrodatná odchylka σ", value=1.0, key="sigma_norm_2")
+                mu2 = st.sidebar.number_input(
+                    "Střední hodnota μ",
+                    value=0.0,
+                    key="mu_norm_2",
+                )
+                sigma_input_2 = st.sidebar.number_input(
+                    "Směrodatná odchylka σ",
+                    value=1.0,
+                    key="sigma_norm_2",
+                )
 
             elif typ2 == "Sinusovka":
                 length2 = st.sidebar.slider("Délka řady", 10, 5000, 100, key="len_sin_2")
@@ -3553,8 +3371,22 @@ else:  # "Porovnat dvě časové řady"
             )
 
             if chaos_typ2 == "Logistická mapa":
-                length2 = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100, key="len_log_2")
-                r2 = st.sidebar.slider("Parametr r", 3.5, 4.0, 3.9, step=0.01, key="r_log_2")
+                length2 = st.sidebar.slider(
+                    "Délka řady",
+                    100,
+                    5000,
+                    1000,
+                    step=100,
+                    key="len_log_2",
+                )
+                r2 = st.sidebar.slider(
+                    "Parametr r",
+                    3.5,
+                    4.0,
+                    3.9,
+                    step=0.01,
+                    key="r_log_2",
+                )
                 x02 = st.sidebar.number_input(
                     "Počáteční x₀",
                     min_value=0.0,
@@ -3573,7 +3405,14 @@ else:  # "Porovnat dvě časové řady"
                 )
 
             elif chaos_typ2 == "Henonova mapa":
-                length2 = st.sidebar.slider("Délka řady", 100, 5000, 1000, step=100, key="len_hen_2")
+                length2 = st.sidebar.slider(
+                    "Délka řady",
+                    100,
+                    5000,
+                    1000,
+                    step=100,
+                    key="len_hen_2",
+                )
                 a2 = st.sidebar.number_input("Parametr a", value=1.4, step=0.1, key="a_hen_2")
                 b2 = st.sidebar.number_input("Parametr b", value=0.3, step=0.05, key="b_hen_2")
                 x02 = st.sidebar.number_input("Počáteční x₀", value=0.1, step=0.05, key="x0_hen_2")
@@ -3588,7 +3427,14 @@ else:  # "Porovnat dvě časové řady"
                 )
 
             elif chaos_typ2 == "Lorenzův systém (x-složka)":
-                length2 = st.sidebar.slider("Délka řady", 200, 10000, 2000, step=200, key="len_lor_2")
+                length2 = st.sidebar.slider(
+                    "Délka řady",
+                    200,
+                    10000,
+                    2000,
+                    step=200,
+                    key="len_lor_2",
+                )
                 dt2 = st.sidebar.number_input(
                     "Krok integrace dt",
                     value=0.01,
@@ -3609,25 +3455,41 @@ else:  # "Porovnat dvě časové řady"
                 )
 
             elif chaos_typ2 == "1/f šum (pink noise)":
-                length2 = st.sidebar.slider("Délka řady", 100, 10000, 2000, step=100, key="len_pink_2")
+                length2 = st.sidebar.slider(
+                    "Délka řady",
+                    100,
+                    10000,
+                    2000,
+                    step=100,
+                    key="len_pink_2",
+                )
 
         # -----------------------------
         # Nahrát CSV – Série 2
         # -----------------------------
         elif mode2 == "Nahrát CSV":
             file2 = st.sidebar.file_uploader(
-                "Nahraj CSV soubor", type="csv", key="csv_cmp_2"
+                "Nahraj CSV soubor",
+                type="csv",
+                key="csv_cmp_2",
             )
 
             if file2 is not None:
                 csv2_has_header = st.sidebar.checkbox(
-                    "CSV má hlavičku", value=True, key="csv2_header"
+                    "CSV má hlavičku",
+                    value=True,
+                    key="csv2_header",
                 )
 
-                df2_preview, _, _, err = load_csv_series(
-                    file2,
-                    has_header=csv2_has_header,
-                )
+                try:
+                    df2_preview = read_csv_cached(
+                        file2.getvalue(),
+                        has_header=csv2_has_header,
+                    )
+                    err = None
+                except Exception as e:
+                    df2_preview = None
+                    err = f"Chyba při načítání CSV: {e}"
 
                 if err:
                     st.sidebar.error(err)
@@ -3649,8 +3511,6 @@ else:  # "Porovnat dvě časové řady"
                         key="csv2_datetime_col",
                     )
 
-                    selection_mode_cmp = "index"
-
                     if csv2_datetime_column != "Žádný":
                         selection_mode_cmp = st.sidebar.radio(
                             "Jak chceš vybírat rozsah?",
@@ -3659,7 +3519,9 @@ else:  # "Porovnat dvě časové řady"
                         )
 
                     normalize_csv2 = st.sidebar.checkbox(
-                        "Normalizovat (z-score)", value=False, key="csv2_norm"
+                        "Normalizovat (z-score)",
+                        value=False,
+                        key="csv2_norm",
                     )
 
                     if normalize_csv2:
@@ -3694,9 +3556,13 @@ else:  # "Porovnat dvě časové řady"
 
                     st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
 
+                    preview_meta2 = None
+                    preview_err2 = None
+
                     if csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data":
                         dt_series2 = pd.to_datetime(
-                            df2_preview[csv2_datetime_column], errors="coerce"
+                            df2_preview[csv2_datetime_column],
+                            errors="coerce",
                         ).dropna()
 
                         if len(dt_series2) > 0:
@@ -3721,6 +3587,7 @@ else:  # "Porovnat dvě časové řady"
 
                             _, _, preview_meta2, preview_err2 = load_csv_series(
                                 file2,
+                                df_input=df2_preview,
                                 selected_column=selected_column2,
                                 normalize=False,
                                 start_index=0,
@@ -3759,6 +3626,7 @@ else:  # "Porovnat dvě časové řady"
                         start_tmp2, end_tmp2 = st.session_state.csv2_range
                         start_tmp2 = min(max(0, start_tmp2), max_possible_index2)
                         end_tmp2 = min(max(0, end_tmp2), max_possible_index2)
+
                         if start_tmp2 > end_tmp2:
                             start_tmp2, end_tmp2 = end_tmp2, start_tmp2
 
@@ -3802,6 +3670,7 @@ else:  # "Porovnat dvě časové řady"
 
                         _, _, preview_meta2, preview_err2 = load_csv_series(
                             file2,
+                            df_input=df2_preview,
                             selected_column=selected_column2,
                             normalize=False,
                             start_index=csv2_start_index,
@@ -3822,7 +3691,7 @@ else:  # "Porovnat dvě časové řady"
                                 f"Po načtení vznikne přibližně {preview_meta2['n_points']} bodů časové řady."
                             )
 
-        generate2 = st.sidebar.button("Načíst / generovat sérii 2")        
+        generate2 = st.sidebar.button("Načíst / generovat sérii 2")
 
         if generate2:
             if mode2 == "Standardní signály":
@@ -3830,7 +3699,11 @@ else:  # "Porovnat dvě časové řady"
                     data2_candidate = np.random.uniform(low=low2, high=high2, size=length2)
 
                 elif typ2 == "Náhodná normální":
-                    data2_candidate = np.random.normal(loc=mu2, scale=sigma2, size=length2)
+                    data2_candidate = np.random.normal(
+                        loc=mu2,
+                        scale=sigma_input_2,
+                        size=length2,
+                    )
 
                 elif typ2 == "Sinusovka":
                     x2 = np.arange(length2)
@@ -3849,7 +3722,12 @@ else:  # "Porovnat dvě časové řady"
 
                 elif chaos_typ2 == "Henonova mapa":
                     data2_candidate = generate_henon_map(
-                        length2, a=a2, b=b2, x0=x02, y0=y02, burn=burn2
+                        length2,
+                        a=a2,
+                        b=b2,
+                        x0=x02,
+                        y0=y02,
+                        burn=burn2,
                     )
 
                 elif chaos_typ2 == "Lorenzův systém (x-složka)":
@@ -3877,15 +3755,28 @@ else:  # "Porovnat dvě časové řady"
                 else:
                     _, data2_candidate, meta2, err2 = load_csv_series(
                         file2,
+                        df_input=df2_preview,
                         selected_column=selected_column2,
                         normalize=normalize_csv2,
                         start_index=csv2_start_index,
                         end_index=csv2_end_index,
                         has_header=csv2_has_header,
                         datetime_column=None if csv2_datetime_column == "Žádný" else csv2_datetime_column,
-                        selection_mode="date" if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data") else "index",
-                        start_date=csv2_start_date if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data") else None,
-                        end_date=csv2_end_date if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data") else None,
+                        selection_mode=(
+                            "date"
+                            if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data")
+                            else "index"
+                        ),
+                        start_date=(
+                            csv2_start_date
+                            if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data")
+                            else None
+                        ),
+                        end_date=(
+                            csv2_end_date
+                            if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data")
+                            else None
+                        ),
                         aggregation_freq=aggregation_freq_cmp,
                         aggregation_method=aggregation_method_cmp,
                     )
@@ -3942,20 +3833,13 @@ else:  # "Porovnat dvě časové řady"
                 "**„Načíst / generovat sérii 2“**."
             )
         else:
-            G2 = build_hvg(data2)
+            G2 = build_hvg_cached(data2)
             metrics2 = compute_graph_metrics(G2)
 
             n2 = metrics2["n_nodes"]
             m2 = metrics2["n_edges"]
             degs2 = metrics2["degrees"]
             avg_deg2 = metrics2["avg_deg"]
-            degree_metrics_2 = compute_degree_distribution_metrics(degs2)
-
-            unique_deg2_main = degree_metrics_2["unique_deg"]
-            counts2_main = degree_metrics_2["counts"]
-            pk2_main = degree_metrics_2["pk"]
-            entropy_deg2 = degree_metrics_2["entropy_deg"]
-            entropy_deg_norm2 = degree_metrics_2["entropy_deg_norm"]
             C2 = metrics2["C"]
             L2 = metrics2["L"]
             diam2 = metrics2["diam"]
@@ -3963,26 +3847,34 @@ else:  # "Porovnat dvě časové řady"
             L_rand2 = metrics2["L_rand"]
             C_rand2 = metrics2["C_rand"]
             sigma2 = metrics2["sigma"]
+            analyzer2 = metrics2["analyzer"]
 
-            analyzer2 = SmallWorldAnalyzer(C2, L2, C_rand2, L_rand2)
+            degree_metrics_2 = compute_degree_distribution_metrics(degs2)
+            unique_deg2_main = degree_metrics_2["unique_deg"]
+            counts2_main = degree_metrics_2["counts"]
+            pk2_main = degree_metrics_2["pk"]
+            entropy_deg2 = degree_metrics_2["entropy_deg"]
+            entropy_deg_norm2 = degree_metrics_2["entropy_deg_norm"]
 
             powerlaw_p_result_2 = None
             powerlaw_R_result_2 = None
-            G2_conf, conf_metrics2 = compute_configuration_model_metrics(G2, seed=42)
 
-            n2c = conf_metrics2["n_nodes"]
-            m2c = conf_metrics2["n_edges"]
-            degs2c = conf_metrics2["degrees"]
-            avg_deg2c = conf_metrics2["avg_deg"]
-            C2c = conf_metrics2["C"]
-            L2c = conf_metrics2["L"]
-            diam2c = conf_metrics2["diam"]
-            assort2c = conf_metrics2["assort"]
-            L_rand2c = conf_metrics2["L_rand"]
-            C_rand2c = conf_metrics2["C_rand"]
-            sigma2c = conf_metrics2["sigma"]
+            G2_conf = None
+            conf_metrics2 = None
+            n2c = None
+            m2c = None
+            degs2c = None
+            avg_deg2c = None
+            C2c = None
+            L2c = None
+            diam2c = None
+            assort2c = None
+            L_rand2c = None
+            C_rand2c = None
+            sigma2c = None
+
             # =============================
-            # Časové řady série 1 a 2 hned pod jejich nadpisy
+            # Časové řady série 1 a 2
             # =============================
             col_series1, col_series2 = st.columns(2)
 
@@ -4058,7 +3950,6 @@ else:  # "Porovnat dvě časové řady"
 
                 st.plotly_chart(fig2, use_container_width=True)
 
-            # tlačítka v jednom samostatném řádku
             btn_col1, btn_col2 = st.columns(2)
 
             with btn_col1:
@@ -4070,8 +3961,9 @@ else:  # "Porovnat dvě časové řady"
                 if st.button("HVG linky (vodorovné) – Série 2", key="btn_cmp_horiz2"):
                     st.session_state.show_cmp_horiz2 = not st.session_state.show_cmp_horiz2
                     st.rerun()
+
             # =============================
-            # Společný výběr sekcí pro obě HVG
+            # Společný výběr sekcí
             # =============================
             section_options_cmp = [
                 "Metriky HVG",
@@ -4087,19 +3979,18 @@ else:  # "Porovnat dvě časové řady"
             selected_sections_cmp = st.multiselect(
                 "Co chceš pod porovnáním zobrazit pro **obě** HVG?",
                 options=section_options_cmp,
-                default=section_options_cmp,  # všechno defaultně
+                default=section_options_cmp,
             )
-            
 
             # =============================
-            # HVG vizualizace vedle sebe
+            # HVG grafy vedle sebe
             # =============================
             st.markdown("### HVG grafy vedle sebe")
 
             col_g1, col_g2 = st.columns(2)
+
             with col_g1:
                 pos1 = compute_graph_layout(G1, layout_type="spring", seed=42)
-
                 edge_trace1, node_trace1 = prepare_network_traces(
                     G1,
                     pos1,
@@ -4121,7 +4012,6 @@ else:  # "Porovnat dvě časové řady"
 
             with col_g2:
                 pos2 = compute_graph_layout(G2, layout_type="spring", seed=42)
-
                 edge_trace2, node_trace2 = prepare_network_traces(
                     G2,
                     pos2,
@@ -4148,6 +4038,7 @@ else:  # "Porovnat dvě časové řady"
                 st.markdown("### Porovnání metrik HVG")
 
                 col_m1, col_m2 = st.columns(2)
+
                 with col_m1:
                     st.markdown("**Série 1 – metriky HVG**")
                     st.write(f"- Počet vrcholů: **{n1}**")
@@ -4156,9 +4047,7 @@ else:  # "Porovnat dvě časové řady"
                     if L1 is not None:
                         st.write(f"- Průměrná délka cesty L: **{L1:.3f}**")
                     else:
-                        st.write(
-                            "- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*"
-                        )
+                        st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*")
                     if diam1 is not None:
                         st.write(f"- Diametr grafu: **{diam1}**")
                     else:
@@ -4192,9 +4081,7 @@ else:  # "Porovnat dvě časové řady"
                     if L2 is not None:
                         st.write(f"- Průměrná délka cesty L: **{L2:.3f}**")
                     else:
-                        st.write(
-                            "- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*"
-                        )
+                        st.write("- Průměrná délka cesty L: *nelze spočítat (nesouvislý graf)*")
                     if diam2 is not None:
                         st.write(f"- Diametr grafu: **{diam2}**")
                     else:
@@ -4219,11 +4106,9 @@ else:  # "Porovnat dvě časové řady"
                             st.warning(msg2)
                         else:
                             st.info(msg2)
-                
-           
-                   
+
             # =============================
-            # Propojení časová řada ↔ HVG (oboje)
+            # Propojení časová řada ↔ HVG
             # =============================
             if "Propojení časová řada ↔ HVG" in selected_sections_cmp:
                 st.markdown("### Propojení časové řady a HVG (Série 1 & 2)")
@@ -4247,10 +4132,7 @@ else:  # "Porovnat dvě časové řady"
                             f"sousedé: **{neighbors1}**"
                         )
 
-                        # časová řada s highlightem
-                        df_ts1 = pd.DataFrame(
-                            {"index": np.arange(len(data1)), "value": data1}
-                        )
+                        df_ts1 = pd.DataFrame({"index": np.arange(len(data1)), "value": data1})
                         fig_ts1 = px.line(
                             df_ts1,
                             x="index",
@@ -4280,14 +4162,15 @@ else:  # "Porovnat dvě časové řady"
                             )
                         st.plotly_chart(fig_ts1, use_container_width=True)
 
-                        # HVG s highlightem
-                        pos1_h = nx.spring_layout(G1, seed=42)
+                        pos1_h = compute_graph_layout(G1, layout_type="spring", seed=42)
+
                         edge_x1h, edge_y1h = [], []
                         for u, v in G1.edges():
                             x0, y0 = pos1_h[u]
                             x1_, y1_ = pos1_h[v]
                             edge_x1h += [x0, x1_, None]
                             edge_y1h += [y0, y1_, None]
+
                         edge_trace1h = go.Scatter(
                             x=edge_x1h,
                             y=edge_y1h,
@@ -4295,11 +4178,13 @@ else:  # "Porovnat dvě časové řady"
                             line=dict(width=1, color="#aaa"),
                             hoverinfo="none",
                         )
+
                         node_x1h, node_y1h = [], []
                         for node in G1.nodes():
                             x, y = pos1_h[node]
                             node_x1h.append(x)
                             node_y1h.append(y)
+
                         node_trace1h = go.Scatter(
                             x=node_x1h,
                             y=node_y1h,
@@ -4314,6 +4199,7 @@ else:  # "Porovnat dvě časové řady"
                             x, y = pos1_h[node]
                             hl_x1.append(x)
                             hl_y1.append(y)
+
                         highlight1 = go.Scatter(
                             x=hl_x1,
                             y=hl_y1,
@@ -4325,9 +4211,7 @@ else:  # "Porovnat dvě časové řady"
                             hovertext=[f"Vrchol: {i}" for i in hl_nodes1],
                         )
 
-                        fig_h1 = go.Figure(
-                            data=[edge_trace1h, node_trace1h, highlight1]
-                        )
+                        fig_h1 = go.Figure(data=[edge_trace1h, node_trace1h, highlight1])
                         fig_h1.update_layout(
                             title="HVG – Série 1 (highlight)",
                             showlegend=False,
@@ -4353,9 +4237,7 @@ else:  # "Porovnat dvě časové řady"
                             f"sousedé: **{neighbors2}**"
                         )
 
-                        df_ts2 = pd.DataFrame(
-                            {"index": np.arange(len(data2)), "value": data2}
-                        )
+                        df_ts2 = pd.DataFrame({"index": np.arange(len(data2)), "value": data2})
                         fig_ts2 = px.line(
                             df_ts2,
                             x="index",
@@ -4385,13 +4267,15 @@ else:  # "Porovnat dvě časové řady"
                             )
                         st.plotly_chart(fig_ts2, use_container_width=True)
 
-                        pos2_h = nx.spring_layout(G2, seed=42)
+                        pos2_h = compute_graph_layout(G2, layout_type="spring", seed=42)
+
                         edge_x2h, edge_y2h = [], []
                         for u, v in G2.edges():
                             x0, y0 = pos2_h[u]
                             x2_, y2_ = pos2_h[v]
                             edge_x2h += [x0, x2_, None]
                             edge_y2h += [y0, y2_, None]
+
                         edge_trace2h = go.Scatter(
                             x=edge_x2h,
                             y=edge_y2h,
@@ -4399,11 +4283,13 @@ else:  # "Porovnat dvě časové řady"
                             line=dict(width=1, color="#aaa"),
                             hoverinfo="none",
                         )
+
                         node_x2h, node_y2h = [], []
                         for node in G2.nodes():
                             x, y = pos2_h[node]
                             node_x2h.append(x)
                             node_y2h.append(y)
+
                         node_trace2h = go.Scatter(
                             x=node_x2h,
                             y=node_y2h,
@@ -4418,6 +4304,7 @@ else:  # "Porovnat dvě časové řady"
                             x, y = pos2_h[node]
                             hl_x2.append(x)
                             hl_y2.append(y)
+
                         highlight2 = go.Scatter(
                             x=hl_x2,
                             y=hl_y2,
@@ -4429,9 +4316,7 @@ else:  # "Porovnat dvě časové řady"
                             hovertext=[f"Vrchol: {i}" for i in hl_nodes2],
                         )
 
-                        fig_h2 = go.Figure(
-                            data=[edge_trace2h, node_trace2h, highlight2]
-                        )
+                        fig_h2 = go.Figure(data=[edge_trace2h, node_trace2h, highlight2])
                         fig_h2.update_layout(
                             title="HVG – Série 2 (highlight)",
                             showlegend=False,
@@ -4441,7 +4326,7 @@ else:  # "Porovnat dvě časové řady"
                         st.plotly_chart(fig_h2, use_container_width=True)
 
             # =============================
-            # Lokální analýza úseku časové řady (oboje)
+            # Lokální analýza
             # =============================
             if "Lokální analýza úseku časové řady" in selected_sections_cmp:
                 st.markdown("### Lokální analýza úseku časové řady (Série 1 & 2)")
@@ -4466,6 +4351,7 @@ else:  # "Porovnat dvě časové řady"
                             f"- Délka úseku: **{len(seg1)}**, "
                             f"rozsah indexů: **[{i1_start}, {i1_end}]**"
                         )
+
                         if len(seg1) > 0:
                             ent1 = shannon_entropy(seg1, bins="auto")
                             st.write(
@@ -4474,22 +4360,22 @@ else:  # "Porovnat dvě časové řady"
                                 f"- Min: **{seg1.min():.3f}**, Max: **{seg1.max():.3f}**  \n"
                                 f"- Shannonova entropie: **{ent1:.3f}**"
                             )
+
                             if len(seg1) >= 2:
-                                G1_seg = build_hvg(seg1)
+                                G1_seg = build_hvg_cached(seg1)
                                 n1s = G1_seg.number_of_nodes()
                                 m1s = G1_seg.number_of_edges()
                                 degs1s = [d for _, d in G1_seg.degree()]
-                                avg_deg1s = (
-                                    float(np.mean(degs1s)) if len(degs1s) > 0 else 0.0
-                                )
+                                avg_deg1s = float(np.mean(degs1s)) if len(degs1s) > 0 else 0.0
+
                                 try:
                                     C1s = nx.average_clustering(G1_seg)
                                 except Exception:
                                     C1s = float("nan")
-                                is_conn1s = (
-                                    nx.is_connected(G1_seg) if n1s > 0 else False
-                                )
+
+                                is_conn1s = nx.is_connected(G1_seg) if n1s > 0 else False
                                 L1s, diam1s = None, None
+
                                 if is_conn1s and n1s > 1:
                                     try:
                                         L1s = nx.average_shortest_path_length(G1_seg)
@@ -4499,6 +4385,7 @@ else:  # "Porovnat dvě časové řady"
                                         diam1s = nx.diameter(G1_seg)
                                     except Exception:
                                         diam1s = None
+
                                 st.markdown("**Lokální HVG – Série 1**")
                                 st.write(
                                     f"- Počet vrcholů: **{n1s}**, počet hran: **{m1s}**, průměrný stupeň: **{avg_deg1s:.3f}**"
@@ -4527,6 +4414,7 @@ else:  # "Porovnat dvě časové řady"
                             f"- Délka úseku: **{len(seg2)}**, "
                             f"rozsah indexů: **[{i2_start}, {i2_end}]**"
                         )
+
                         if len(seg2) > 0:
                             ent2 = shannon_entropy(seg2, bins="auto")
                             st.write(
@@ -4535,22 +4423,22 @@ else:  # "Porovnat dvě časové řady"
                                 f"- Min: **{seg2.min():.3f}**, Max: **{seg2.max():.3f}**  \n"
                                 f"- Shannonova entropie: **{ent2:.3f}**"
                             )
+
                             if len(seg2) >= 2:
-                                G2_seg = build_hvg(seg2)
+                                G2_seg = build_hvg_cached(seg2)
                                 n2s = G2_seg.number_of_nodes()
                                 m2s = G2_seg.number_of_edges()
                                 degs2s = [d for _, d in G2_seg.degree()]
-                                avg_deg2s = (
-                                    float(np.mean(degs2s)) if len(degs2s) > 0 else 0.0
-                                )
+                                avg_deg2s = float(np.mean(degs2s)) if len(degs2s) > 0 else 0.0
+
                                 try:
                                     C2s = nx.average_clustering(G2_seg)
                                 except Exception:
                                     C2s = float("nan")
-                                is_conn2s = (
-                                    nx.is_connected(G2_seg) if n2s > 0 else False
-                                )
+
+                                is_conn2s = nx.is_connected(G2_seg) if n2s > 0 else False
                                 L2s, diam2s = None, None
+
                                 if is_conn2s and n2s > 1:
                                     try:
                                         L2s = nx.average_shortest_path_length(G2_seg)
@@ -4560,6 +4448,7 @@ else:  # "Porovnat dvě časové řady"
                                         diam2s = nx.diameter(G2_seg)
                                     except Exception:
                                         diam2s = None
+
                                 st.markdown("**Lokální HVG – Série 2**")
                                 st.write(
                                     f"- Počet vrcholů: **{n2s}**, počet hran: **{m2s}**, průměrný stupeň: **{avg_deg2s:.3f}**"
@@ -4571,7 +4460,7 @@ else:  # "Porovnat dvě časové řady"
                                     st.write(f"- Průměr grafu: **{diam2s}**")
 
             # =============================
-            # Podgraf HVG pro obě série
+            # Podgraf HVG
             # =============================
             if "Podgraf HVG" in selected_sections_cmp:
                 st.markdown("### Podgraf HVG pro obě série")
@@ -4607,20 +4496,18 @@ else:  # "Porovnat dvě časové řady"
                         st.write(
                             f"- Vrcholy: **{G1_sub.number_of_nodes()}**, hrany: **{G1_sub.number_of_edges()}**"
                         )
+
                         degs1_sub = [d for _, d in G1_sub.degree()]
-                        avg_deg1_sub = (
-                            float(np.mean(degs1_sub)) if len(degs1_sub) > 0 else 0.0
-                        )
+                        avg_deg1_sub = float(np.mean(degs1_sub)) if len(degs1_sub) > 0 else 0.0
+
                         try:
                             C1_sub = nx.average_clustering(G1_sub)
                         except Exception:
                             C1_sub = float("nan")
-                        is_conn1_sub = (
-                            nx.is_connected(G1_sub)
-                            if G1_sub.number_of_nodes() > 0
-                            else False
-                        )
+
+                        is_conn1_sub = nx.is_connected(G1_sub) if G1_sub.number_of_nodes() > 0 else False
                         L1_sub, diam1_sub = None, None
+
                         if is_conn1_sub and G1_sub.number_of_nodes() > 1:
                             try:
                                 L1_sub = nx.average_shortest_path_length(G1_sub)
@@ -4630,6 +4517,7 @@ else:  # "Porovnat dvě časové řady"
                                 diam1_sub = nx.diameter(G1_sub)
                             except Exception:
                                 diam1_sub = None
+
                         st.write(f"- Průměrný stupeň: **{avg_deg1_sub:.3f}**")
                         st.write(f"- Clustering: **{C1_sub:.3f}**")
                         if L1_sub is not None:
@@ -4637,7 +4525,6 @@ else:  # "Porovnat dvě časové řady"
                         if diam1_sub is not None:
                             st.write(f"- Průměr grafu: **{diam1_sub}**")
 
-                        # vizualizace s původním layoutem pos1
                         edge_trace1_sub, node_trace1_sub = prepare_network_traces(
                             G1_sub,
                             pos1,
@@ -4667,20 +4554,18 @@ else:  # "Porovnat dvě časové řady"
                         st.write(
                             f"- Vrcholy: **{G2_sub.number_of_nodes()}**, hrany: **{G2_sub.number_of_edges()}**"
                         )
+
                         degs2_sub = [d for _, d in G2_sub.degree()]
-                        avg_deg2_sub = (
-                            float(np.mean(degs2_sub)) if len(degs2_sub) > 0 else 0.0
-                        )
+                        avg_deg2_sub = float(np.mean(degs2_sub)) if len(degs2_sub) > 0 else 0.0
+
                         try:
                             C2_sub = nx.average_clustering(G2_sub)
                         except Exception:
                             C2_sub = float("nan")
-                        is_conn2_sub = (
-                            nx.is_connected(G2_sub)
-                            if G2_sub.number_of_nodes() > 0
-                            else False
-                        )
+
+                        is_conn2_sub = nx.is_connected(G2_sub) if G2_sub.number_of_nodes() > 0 else False
                         L2_sub, diam2_sub = None, None
+
                         if is_conn2_sub and G2_sub.number_of_nodes() > 1:
                             try:
                                 L2_sub = nx.average_shortest_path_length(G2_sub)
@@ -4690,6 +4575,7 @@ else:  # "Porovnat dvě časové řady"
                                 diam2_sub = nx.diameter(G2_sub)
                             except Exception:
                                 diam2_sub = None
+
                         st.write(f"- Průměrný stupeň: **{avg_deg2_sub:.3f}**")
                         st.write(f"- Clustering: **{C2_sub:.3f}**")
                         if L2_sub is not None:
@@ -4717,13 +4603,41 @@ else:  # "Porovnat dvě časové řady"
                         st.plotly_chart(fig2_sub, use_container_width=True)
 
             # =============================
-            #  Konfigurační graf (null model) pro obě série
+            # Konfigurační graf (null model)
             # =============================
             if "Konfigurační graf (null model)" in selected_sections_cmp:
                 st.markdown("### Konfigurační graf (null model) pro obě série")
 
+                if conf_metrics1 is None:
+                    G1_conf, conf_metrics1 = compute_configuration_model_metrics(G1, seed=42)
+                    n1c = conf_metrics1["n_nodes"]
+                    m1c = conf_metrics1["n_edges"]
+                    degs1c = conf_metrics1["degrees"]
+                    avg_deg1c = conf_metrics1["avg_deg"]
+                    C1c = conf_metrics1["C"]
+                    L1c = conf_metrics1["L"]
+                    diam1c = conf_metrics1["diam"]
+                    assort1c = conf_metrics1["assort"]
+                    L_rand1c = conf_metrics1["L_rand"]
+                    C_rand1c = conf_metrics1["C_rand"]
+                    sigma1c = conf_metrics1["sigma"]
+
+                if conf_metrics2 is None:
+                    G2_conf, conf_metrics2 = compute_configuration_model_metrics(G2, seed=42)
+                    n2c = conf_metrics2["n_nodes"]
+                    m2c = conf_metrics2["n_edges"]
+                    degs2c = conf_metrics2["degrees"]
+                    avg_deg2c = conf_metrics2["avg_deg"]
+                    C2c = conf_metrics2["C"]
+                    L2c = conf_metrics2["L"]
+                    diam2c = conf_metrics2["diam"]
+                    assort2c = conf_metrics2["assort"]
+                    L_rand2c = conf_metrics2["L_rand"]
+                    C_rand2c = conf_metrics2["C_rand"]
+                    sigma2c = conf_metrics2["sigma"]
 
                 col_conf1, col_conf2 = st.columns(2)
+
                 with col_conf1:
                     st.markdown("**Konfigurační graf – Série 1**")
                     st.write(f"- Počet vrcholů: **{n1c}**")
@@ -4732,9 +4646,7 @@ else:  # "Porovnat dvě časové řady"
                     if L1c is not None:
                         st.write(f"- Průměrná délka cesty L_conf: **{L1c:.3f}**")
                     else:
-                        st.write(
-                            "- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*"
-                        )
+                        st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
                     if diam1c is not None:
                         st.write(f"- Průměr grafu (diameter_conf): **{diam1c}**")
                     else:
@@ -4750,7 +4662,6 @@ else:  # "Porovnat dvě časové řady"
                         st.write(f"- Small-world index σ_conf: **{sigma1c:.2f}**")
 
                     pos1c = compute_graph_layout(G1_conf, layout_type="spring", seed=42)
-
                     edge_trace1c, node_trace1c = prepare_network_traces(
                         G1_conf,
                         pos1c,
@@ -4778,9 +4689,7 @@ else:  # "Porovnat dvě časové řady"
                     if L2c is not None:
                         st.write(f"- Průměrná délka cesty L_conf: **{L2c:.3f}**")
                     else:
-                        st.write(
-                            "- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*"
-                        )
+                        st.write("- Průměrná délka cesty L_conf: *nelze spočítat (nesouvislý graf)*")
                     if diam2c is not None:
                         st.write(f"- Průměr grafu (diameter_conf): **{diam2c}**")
                     else:
@@ -4796,7 +4705,6 @@ else:  # "Porovnat dvě časové řady"
                         st.write(f"- Small-world index σ_conf: **{sigma2c:.2f}**")
 
                     pos2c = compute_graph_layout(G2_conf, layout_type="spring", seed=42)
-
                     edge_trace2c, node_trace2c = prepare_network_traces(
                         G2_conf,
                         pos2c,
@@ -4816,48 +4724,27 @@ else:  # "Porovnat dvě časové řady"
                     )
                     st.plotly_chart(fig_conf2, use_container_width=True)
 
-
             # =============================
-            #  Porovnání stupňového rozdělení
+            # Rozdělení stupňů + power-law
             # =============================
             if "Rozdělení stupňů + power-law" in selected_sections_cmp:
                 st.markdown("### Porovnání stupňového rozdělení")
-                
-                # -----------------------------
-                # Série 1 – stupňové rozdělení
-                # -----------------------------
-                unique_deg1, counts1 = np.unique(degs1, return_counts=True)
-                pk1 = counts1 / counts1.sum()
 
-                entropy_deg1 = -np.sum(pk1 * np.log(pk1))
-                n_unique_deg1 = len(unique_deg1)
-                if n_unique_deg1 > 1:
-                    entropy_deg_norm1 = entropy_deg1 / np.log(n_unique_deg1)
-                else:
-                    entropy_deg_norm1 = 0.0
+                unique_deg1 = degree_metrics_1["unique_deg"]
+                counts1 = degree_metrics_1["counts"]
+                pk1 = degree_metrics_1["pk"]
+                entropy_deg1 = degree_metrics_1["entropy_deg"]
+                entropy_deg_norm1 = degree_metrics_1["entropy_deg_norm"]
+
+                unique_deg2 = degree_metrics_2["unique_deg"]
+                counts2 = degree_metrics_2["counts"]
+                pk2 = degree_metrics_2["pk"]
+                entropy_deg2 = degree_metrics_2["entropy_deg"]
+                entropy_deg_norm2 = degree_metrics_2["entropy_deg_norm"]
 
                 entropy_level1, entropy_text1 = classify_entropy_level(entropy_deg_norm1)
-
-                # -----------------------------
-                # Série 2 – stupňové rozdělení
-                # -----------------------------
-                unique_deg2, counts2 = np.unique(degs2, return_counts=True)
-                pk2 = counts2 / counts2.sum()
-
-                entropy_deg2 = -np.sum(pk2 * np.log(pk2))
-                n_unique_deg2 = len(unique_deg2)
-                if n_unique_deg2 > 1:
-                    entropy_deg_norm2 = entropy_deg2 / np.log(n_unique_deg2)
-                else:
-                    entropy_deg_norm2 = 0.0
-
                 entropy_level2, entropy_text2 = classify_entropy_level(entropy_deg_norm2)
 
-
-            
-                # -----------------------------
-                # Metriky vedle sebe
-                # -----------------------------
                 col_deg_s1, col_deg_s2 = st.columns(2)
 
                 with col_deg_s1:
@@ -4888,9 +4775,6 @@ else:  # "Porovnat dvě časové řady"
                     with metric_col5:
                         st.metric("Norm. entropie", f"{entropy_deg_norm2:.3f}", delta=entropy_level2)
 
-                # -----------------------------
-                # Stručné porovnání rozdělení
-                # -----------------------------
                 st.markdown("#### Stručná interpretace porovnání")
 
                 comparison_deg_parts = []
@@ -4927,9 +4811,7 @@ else:  # "Porovnat dvě časové řady"
                         "Série 2 má širší rozsah stupňů, což naznačuje větší rozdíly mezi slabě a silně propojenými vrcholy."
                     )
                 else:
-                    comparison_deg_parts.append(
-                        "Obě série mají podobný rozsah stupňů."
-                    )
+                    comparison_deg_parts.append("Obě série mají podobný rozsah stupňů.")
 
                 if np.median(degs1) > np.median(degs2):
                     comparison_deg_parts.append(
@@ -4940,15 +4822,10 @@ else:  # "Porovnat dvě časové řady"
                         "Medián stupně je vyšší u Série 2, takže typický vrchol bývá o něco více propojený."
                     )
                 else:
-                    comparison_deg_parts.append(
-                        "Typický vrchol má v obou sériích podobný stupeň."
-                    )
+                    comparison_deg_parts.append("Typický vrchol má v obou sériích podobný stupeň.")
 
                 st.info(" ".join(comparison_deg_parts))
-                
-                # -----------------------------
-                # Společný histogram
-                # -----------------------------
+
                 df_deg_cmp = pd.DataFrame(
                     {
                         "degree": degs1 + degs2,
@@ -4974,9 +4851,6 @@ else:  # "Porovnat dvě časové řady"
                 fig_deg_cmp.update_layout(yaxis_title="Počet vrcholů")
                 st.plotly_chart(fig_deg_cmp, use_container_width=True)
 
-                # -----------------------------
-                # PDF stupňového rozdělení – obě série
-                # -----------------------------
                 st.markdown("#### PDF stupňového rozdělení")
 
                 col_pdf1, col_pdf2 = st.columns(2)
@@ -5001,9 +4875,6 @@ else:  # "Porovnat dvě časové řady"
                     "PDF ukazuje pravděpodobnost, že náhodně vybraný vrchol má právě stupeň k."
                 )
 
-                # -----------------------------
-                # CDF stupňového rozdělení – obě série
-                # -----------------------------
                 st.markdown("#### CDF stupňového rozdělení")
 
                 cdf1 = np.cumsum(pk1)
@@ -5031,13 +4902,11 @@ else:  # "Porovnat dvě časové řady"
                     "CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů."
                 )
 
-                # -----------------------------
-                # Formální power-law test + CCDF
-                # -----------------------------
                 st.markdown("#### Formální power-law test + CCDF")
+
                 do_powerlaw_cmp = st.checkbox(
-                "🔍 Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
-                key="cmp_powerlaw_global",
+                    "🔍 Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
+                    key="cmp_powerlaw_global",
                 )
 
                 alpha1 = None
@@ -5064,9 +4933,7 @@ else:  # "Porovnat dvě časové řady"
 
                             if not result1["success"]:
                                 if result1["reason"] == "Příliš málo hodnot pro smysluplný fit.":
-                                    st.info(
-                                        "Série 1 má příliš málo vrcholů pro smysluplný power-law fit."
-                                    )
+                                    st.info("Série 1 má příliš málo vrcholů pro smysluplný power-law fit.")
                                 else:
                                     st.info(
                                         f"Power-law test pro Sérii 1 se nepodařilo spolehlivě vyhodnotit: {result1['reason']}"
@@ -5090,9 +4957,7 @@ else:  # "Porovnat dvě časové řady"
                                         )
                                     else:
                                         result_text_1 = "spíše neodpovídá power-law"
-                                        st.warning(
-                                            "Power-law model je horší než exponenciální rozdělení."
-                                        )
+                                        st.warning("Power-law model je horší než exponenciální rozdělení.")
                                 else:
                                     result_text_1 = "neprůkazné"
                                     st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
@@ -5100,10 +4965,7 @@ else:  # "Porovnat dvě časové řady"
                                 degs1_for_fit = result1["degrees_for_fit"]
                                 unique_sorted1 = np.sort(np.unique(degs1_for_fit))
                                 ccdf_vals1 = np.array(
-                                    [
-                                        np.sum(degs1_for_fit >= k) / len(degs1_for_fit)
-                                        for k in unique_sorted1
-                                    ]
+                                    [np.sum(degs1_for_fit >= k) / len(degs1_for_fit) for k in unique_sorted1]
                                 )
 
                                 mask1 = unique_sorted1 >= xmin1
@@ -5143,18 +5005,14 @@ else:  # "Porovnat dvě časové řady"
                                     )
                                     st.plotly_chart(fig_ccdf1, use_container_width=True)
                                 else:
-                                    st.info(
-                                        "Tail rozdělení Série 1 je příliš krátký na smysluplný CCDF graf."
-                                    )
+                                    st.info("Tail rozdělení Série 1 je příliš krátký na smysluplný CCDF graf.")
 
                         with col_pl2:
                             st.markdown("**Série 2 – power-law analýza**")
 
                             if not result2["success"]:
                                 if result2["reason"] == "Příliš málo hodnot pro smysluplný fit.":
-                                    st.info(
-                                        "Série 2 má příliš málo vrcholů pro smysluplný power-law fit."
-                                    )
+                                    st.info("Série 2 má příliš málo vrcholů pro smysluplný power-law fit.")
                                 else:
                                     st.info(
                                         f"Power-law test pro Sérii 2 se nepodařilo spolehlivě vyhodnotit: {result2['reason']}"
@@ -5178,9 +5036,7 @@ else:  # "Porovnat dvě časové řady"
                                         )
                                     else:
                                         result_text_2 = "spíše neodpovídá power-law"
-                                        st.warning(
-                                            "Power-law model je horší než exponenciální rozdělení."
-                                        )
+                                        st.warning("Power-law model je horší než exponenciální rozdělení.")
                                 else:
                                     result_text_2 = "neprůkazné"
                                     st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
@@ -5188,10 +5044,7 @@ else:  # "Porovnat dvě časové řady"
                                 degs2_for_fit = result2["degrees_for_fit"]
                                 unique_sorted2 = np.sort(np.unique(degs2_for_fit))
                                 ccdf_vals2 = np.array(
-                                    [
-                                        np.sum(degs2_for_fit >= k) / len(degs2_for_fit)
-                                        for k in unique_sorted2
-                                    ]
+                                    [np.sum(degs2_for_fit >= k) / len(degs2_for_fit) for k in unique_sorted2]
                                 )
 
                                 mask2 = unique_sorted2 >= xmin2
@@ -5231,9 +5084,7 @@ else:  # "Porovnat dvě časové řady"
                                     )
                                     st.plotly_chart(fig_ccdf2, use_container_width=True)
                                 else:
-                                    st.info(
-                                        "Tail rozdělení Série 2 je příliš krátký na smysluplný CCDF graf."
-                                    )
+                                    st.info("Tail rozdělení Série 2 je příliš krátký na smysluplný CCDF graf.")
 
                         st.markdown("#### Porovnání power-law výsledků")
 
@@ -5264,533 +5115,531 @@ else:  # "Porovnat dvě časové řady"
                             )
 
                         st.warning(" ".join(compare_powerlaw_parts))
-            
-                # =============================
-                # Shrnutí analýzy pro obě série
-                # =============================
-                if "Shrnutí analýzy" in selected_sections_cmp:
-                    st.markdown("### Shrnutí analýzy")
 
-                    experiment_name_cmp = st.text_input(
-                        "Název experimentu / porovnání",
-                        value="Porovnání série 1 a série 2",
-                        key="cmp_experiment_name",
-                    )
+            # =============================
+            # Shrnutí analýzy pro obě série
+            # =============================
+            if "Shrnutí analýzy" in selected_sections_cmp:
+                st.markdown("### Shrnutí analýzy")
 
-                    tech1, interp1, verdict1 = generate_hvg_summary_text(
-                        n_nodes=n1,
-                        n_edges=m1,
-                        avg_deg=avg_deg1,
-                        C=C1,
-                        L=L1,
-                        sigma_sw=sigma1,
-                        assort=assort1,
-                        is_normalized=st.session_state.get("series_normalized", False),
-                        aggregation_freq=st.session_state.get("series_aggregation", None),
-                        series_name=st.session_state.get("series_name", "Série 1"),
-                    )
+                if conf_metrics1 is None:
+                    G1_conf, conf_metrics1 = compute_configuration_model_metrics(G1, seed=42)
+                    n1c = conf_metrics1["n_nodes"]
+                    m1c = conf_metrics1["n_edges"]
+                    degs1c = conf_metrics1["degrees"]
+                    avg_deg1c = conf_metrics1["avg_deg"]
+                    C1c = conf_metrics1["C"]
+                    L1c = conf_metrics1["L"]
+                    diam1c = conf_metrics1["diam"]
+                    assort1c = conf_metrics1["assort"]
+                    L_rand1c = conf_metrics1["L_rand"]
+                    C_rand1c = conf_metrics1["C_rand"]
+                    sigma1c = conf_metrics1["sigma"]
 
-                    tech2, interp2, verdict2 = generate_hvg_summary_text(
-                        n_nodes=n2,
-                        n_edges=m2,
-                        avg_deg=avg_deg2,
-                        C=C2,
-                        L=L2,
-                        sigma_sw=sigma2,
-                        assort=assort2,
-                        is_normalized=st.session_state.get("series_normalized2", False),
-                        aggregation_freq=st.session_state.get("series_aggregation2", None),
-                        series_name=st.session_state.get("series_name2", "Série 2"),
-                    )
+                if conf_metrics2 is None:
+                    G2_conf, conf_metrics2 = compute_configuration_model_metrics(G2, seed=42)
+                    n2c = conf_metrics2["n_nodes"]
+                    m2c = conf_metrics2["n_edges"]
+                    degs2c = conf_metrics2["degrees"]
+                    avg_deg2c = conf_metrics2["avg_deg"]
+                    C2c = conf_metrics2["C"]
+                    L2c = conf_metrics2["L"]
+                    diam2c = conf_metrics2["diam"]
+                    assort2c = conf_metrics2["assort"]
+                    L_rand2c = conf_metrics2["L_rand"]
+                    C_rand2c = conf_metrics2["C_rand"]
+                    sigma2c = conf_metrics2["sigma"]
 
-                    classification1 = classify_series_from_hvg(
-                        avg_deg=avg_deg1,
-                        C=C1,
-                        L=L1,
-                        sigma_sw=sigma1,
-                        assort=assort1,
-                        entropy_deg_norm=entropy_deg_norm1,
-                        powerlaw_p=powerlaw_p_result_1,
-                        powerlaw_R=powerlaw_R_result_1,
-                        C_rand=C_rand1,
-                        L_rand=L_rand1,
-                        sigma_conf=sigma1c,
-                    )
+                experiment_name_cmp = st.text_input(
+                    "Název experimentu / porovnání",
+                    value="Porovnání série 1 a série 2",
+                    key="cmp_experiment_name",
+                )
 
-                    classification2 = classify_series_from_hvg(
-                        avg_deg=avg_deg2,
-                        C=C2,
-                        L=L2,
-                        sigma_sw=sigma2,
-                        assort=assort2,
-                        entropy_deg_norm=entropy_deg_norm2,
-                        powerlaw_p=powerlaw_p_result_2,
-                        powerlaw_R=powerlaw_R_result_2,
-                        C_rand=C_rand2,
-                        L_rand=L_rand2,
-                        sigma_conf=sigma2c,
-                    )
+                tech1, interp1, verdict1 = generate_hvg_summary_text(
+                    n_nodes=n1,
+                    n_edges=m1,
+                    avg_deg=avg_deg1,
+                    C=C1,
+                    L=L1,
+                    sigma_sw=sigma1,
+                    assort=assort1,
+                    is_normalized=st.session_state.get("series_normalized", False),
+                    aggregation_freq=st.session_state.get("series_aggregation", None),
+                    series_name=st.session_state.get("series_name", "Série 1"),
+                )
 
-                    # =============================
-                    # Funkce pro vykreslení série
-                    # =============================
-                    def render_series_summary(title, tech, interp, verdict, classification, n_points, n_nodes_local):
-                        st.markdown(f"## {title}")
+                tech2, interp2, verdict2 = generate_hvg_summary_text(
+                    n_nodes=n2,
+                    n_edges=m2,
+                    avg_deg=avg_deg2,
+                    C=C2,
+                    L=L2,
+                    sigma_sw=sigma2,
+                    assort=assort2,
+                    is_normalized=st.session_state.get("series_normalized2", False),
+                    aggregation_freq=st.session_state.get("series_aggregation2", None),
+                    series_name=st.session_state.get("series_name2", "Série 2"),
+                )
 
-                        # ---- VALIDACE ----
-                        validation_messages = []
+                classification1 = classify_series_from_hvg(
+                    avg_deg=avg_deg1,
+                    C=C1,
+                    L=L1,
+                    sigma_sw=sigma1,
+                    assort=assort1,
+                    entropy_deg_norm=entropy_deg_norm1,
+                    powerlaw_p=powerlaw_p_result_1,
+                    powerlaw_R=powerlaw_R_result_1,
+                    C_rand=C_rand1,
+                    L_rand=L_rand1,
+                    sigma_conf=sigma1c,
+                )
 
-                        if n_points < 10:
-                            validation_messages.append(
-                                "Časová řada je velmi krátká (méně než 10 bodů), takže výsledky mohou být silně nestabilní."
-                            )
-                        elif n_points < 30:
-                            validation_messages.append(
-                                "Časová řada je poměrně krátká (méně než 30 bodů), takže interpretace může být méně spolehlivá."
-                            )
+                classification2 = classify_series_from_hvg(
+                    avg_deg=avg_deg2,
+                    C=C2,
+                    L=L2,
+                    sigma_sw=sigma2,
+                    assort=assort2,
+                    entropy_deg_norm=entropy_deg_norm2,
+                    powerlaw_p=powerlaw_p_result_2,
+                    powerlaw_R=powerlaw_R_result_2,
+                    C_rand=C_rand2,
+                    L_rand=L_rand2,
+                    sigma_conf=sigma2c,
+                )
 
-                        if n_nodes_local < 10:
-                            validation_messages.append(
-                                "HVG má velmi málo vrcholů, takže některé síťové metriky a klasifikační závěry mohou být méně robustní."
-                            )
+                def render_series_summary(title, tech, interp, verdict, classification, n_points, n_nodes_local):
+                    st.markdown(f"## {title}")
 
-                        if validation_messages:
-                            st.markdown("**Upozornění k interpretaci**")
-                            for msg in validation_messages:
-                                st.warning(msg)
+                    validation_messages = []
 
-                        # ---- TEXTY ----
-                        st.markdown("**Technické shrnutí**")
-                        st.info(tech)
-
-                        st.markdown("**Interpretace řady**")
-                        st.write(interp)
-
-                        # ---- KLASIFIKACE ----
-                        st.markdown("**Orientační klasifikace**")
-                        classification_text = (
-                            f"**{classification['label']}** "
-                            f"(jistota: **{classification['confidence']}**)"
+                    if n_points < 10:
+                        validation_messages.append(
+                            "Časová řada je velmi krátká (méně než 10 bodů), takže výsledky mohou být silně nestabilní."
+                        )
+                    elif n_points < 30:
+                        validation_messages.append(
+                            "Časová řada je poměrně krátká (méně než 30 bodů), takže interpretace může být méně spolehlivá."
                         )
 
-                        if classification["confidence"] == "vyšší":
-                            st.success(classification_text)
-                        elif classification["confidence"] == "střední":
-                            st.warning(classification_text)
-                        else:
-                            st.info(classification_text)
-
-                        st.caption(get_classification_status_text(classification))
-
-                        # ---- DETAIL ----
-                        st.markdown("**Zdůvodnění**")
-                        st.write(classification["reason_text"])
-
-                        st.markdown("**Stabilita a charakter výsledku**")
-                        st.info(
-                            f"{classification['structure_text']} "
-                            f"Alternativní interpretace: {classification['alternative_label']}. "
-                            f"{classification['score_gap_text']} "
-                            f"{classification['gap_text']} "
-                            f"{classification['dominance_text']}"
+                    if n_nodes_local < 10:
+                        validation_messages.append(
+                            "HVG má velmi málo vrcholů, takže některé síťové metriky a klasifikační závěry mohou být méně robustní."
                         )
 
-                        # ---- VERDIKT ----
-                        st.markdown("**Závěr**")
-                        st.warning(verdict)
+                    if validation_messages:
+                        st.markdown("**Upozornění k interpretaci**")
+                        for msg in validation_messages:
+                            st.warning(msg)
 
-                        # ---- METRIKY ----
-                        st.markdown("**Skóre jednotlivých interpretací**")
-                        c1, c2, c3 = st.columns(3)
+                    st.markdown("**Technické shrnutí**")
+                    st.info(tech)
 
-                        with c1:
-                            st.metric(
-                                "Pravidelná / periodická",
-                                f"{classification['scores']['Spíše pravidelná / periodická']:.1f}",
-                                delta=f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
-                            )
+                    st.markdown("**Interpretace řady**")
+                    st.write(interp)
 
-                        with c2:
-                            st.metric(
-                                "Komplexní / chaotická",
-                                f"{classification['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
-                                delta=f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
-                            )
+                    st.markdown("**Orientační klasifikace**")
+                    classification_text = (
+                        f"**{classification['label']}** "
+                        f"(jistota: **{classification['confidence']}**)"
+                    )
 
-                        with c3:
-                            st.metric(
-                                "Stochastická / náhodná",
-                                f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
-                                delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
-                            )
+                    if classification["confidence"] == "vyšší":
+                        st.success(classification_text)
+                    elif classification["confidence"] == "střední":
+                        st.warning(classification_text)
+                    else:
+                        st.info(classification_text)
 
-                        st.caption(
-                            "Hlavní číslo = bodové skóre. Procento = relativní podíl interpretace."
+                    st.caption(get_classification_status_text(classification))
+
+                    st.markdown("**Zdůvodnění**")
+                    st.write(classification["reason_text"])
+
+                    st.markdown("**Stabilita a charakter výsledku**")
+                    st.info(
+                        f"{classification['structure_text']} "
+                        f"Alternativní interpretace: {classification['alternative_label']}. "
+                        f"{classification['score_gap_text']} "
+                        f"{classification['gap_text']} "
+                        f"{classification['dominance_text']}"
+                    )
+
+                    st.markdown("**Závěr**")
+                    st.warning(verdict)
+
+                    st.markdown("**Skóre jednotlivých interpretací**")
+                    c1, c2, c3 = st.columns(3)
+
+                    with c1:
+                        st.metric(
+                            "Pravidelná / periodická",
+                            f"{classification['scores']['Spíše pravidelná / periodická']:.1f}",
+                            delta=f"{classification['normalized_scores']['Spíše pravidelná / periodická']:.1f} %",
                         )
 
-                        # ---- PROGRESS ----
-                        st.markdown("**Relativní podpora interpretací**")
+                    with c2:
+                        st.metric(
+                            "Komplexní / chaotická",
+                            f"{classification['scores']['Spíše komplexní deterministická / chaotická']:.1f}",
+                            delta=f"{classification['normalized_scores']['Spíše komplexní deterministická / chaotická']:.1f} %",
+                        )
 
-                        mapping = [
-                            ("Pravidelná / periodická", "Spíše pravidelná / periodická"),
-                            ("Komplexní / chaotická", "Spíše komplexní deterministická / chaotická"),
-                            ("Stochastická / náhodná", "Spíše stochastická / náhodná"),
-                        ]
+                    with c3:
+                        st.metric(
+                            "Stochastická / náhodná",
+                            f"{classification['scores']['Spíše stochastická / náhodná']:.1f}",
+                            delta=f"{classification['normalized_scores']['Spíše stochastická / náhodná']:.1f} %",
+                        )
 
-                        for label, key in mapping:
-                            st.write(label)
-                            st.progress(classification["normalized_scores"][key] / 100)
-                            st.caption(f"{classification['normalized_scores'][key]:.1f} %")
+                    st.caption("Hlavní číslo = bodové skóre. Procento = relativní podíl interpretace.")
 
-                        st.caption(classification["stability_text"])
-                        st.caption(classification["mixed_text"])
-                        st.caption(classification["warning_text"])
+                    st.markdown("**Relativní podpora interpretací**")
 
-                    # =============================
-                    # Vykreslení obou sérií
-                    # =============================
-                    col_s1, col_s2 = st.columns(2)
+                    mapping = [
+                        ("Pravidelná / periodická", "Spíše pravidelná / periodická"),
+                        ("Komplexní / chaotická", "Spíše komplexní deterministická / chaotická"),
+                        ("Stochastická / náhodná", "Spíše stochastická / náhodná"),
+                    ]
 
-                    with col_s1:
-                        render_series_summary(
+                    for label, key in mapping:
+                        st.write(label)
+                        st.progress(classification["normalized_scores"][key] / 100)
+                        st.caption(f"{classification['normalized_scores'][key]:.1f} %")
+
+                    st.caption(classification["stability_text"])
+                    st.caption(classification["mixed_text"])
+                    st.caption(classification["warning_text"])
+
+                col_s1, col_s2 = st.columns(2)
+
+                with col_s1:
+                    render_series_summary(
+                        "Série 1",
+                        tech1,
+                        interp1,
+                        verdict1,
+                        classification1,
+                        n_points=len(data1),
+                        n_nodes_local=n1,
+                    )
+
+                with col_s2:
+                    render_series_summary(
+                        "Série 2",
+                        tech2,
+                        interp2,
+                        verdict2,
+                        classification2,
+                        n_points=len(data2),
+                        n_nodes_local=n2,
+                    )
+
+                st.markdown("---")
+                st.markdown("## Porovnání sérií")
+
+                topology_parts = []
+
+                if not np.isnan(C1) and not np.isnan(C2):
+                    if C1 > C2:
+                        topology_parts.append("Série 1 vykazuje vyšší lokální propojenost než Série 2.")
+                    elif C2 > C1:
+                        topology_parts.append("Série 2 vykazuje vyšší lokální propojenost než Série 1.")
+                    else:
+                        topology_parts.append("Obě série mají podobnou lokální propojenost.")
+
+                if sigma1 is not None and sigma2 is not None and not np.isnan(sigma1) and not np.isnan(sigma2):
+                    if sigma1 > sigma2:
+                        topology_parts.append("Z hlediska small-world indexu je Série 1 strukturálně výraznější.")
+                    elif sigma2 > sigma1:
+                        topology_parts.append("Z hlediska small-world indexu je Série 2 strukturálně výraznější.")
+                    else:
+                        topology_parts.append("Obě série mají podobný small-world charakter.")
+
+                if avg_deg1 > avg_deg2:
+                    topology_parts.append("HVG Série 1 je v průměru propojenější než HVG Série 2.")
+                elif avg_deg2 > avg_deg1:
+                    topology_parts.append("HVG Série 2 je v průměru propojenější než HVG Série 1.")
+                else:
+                    topology_parts.append("Obě HVG mají podobnou průměrnou propojenost.")
+
+                if entropy_deg_norm1 > entropy_deg_norm2:
+                    topology_parts.append("Série 1 má vyšší variabilitu stupňového rozdělení než Série 2.")
+                elif entropy_deg_norm2 > entropy_deg_norm1:
+                    topology_parts.append("Série 2 má vyšší variabilitu stupňového rozdělení než Série 1.")
+                else:
+                    topology_parts.append("Obě série mají podobnou variabilitu stupňového rozdělení.")
+
+                st.markdown("**Porovnání topologie HVG**")
+                st.info(" ".join(topology_parts))
+
+                st.markdown("**Porovnání výsledné interpretace**")
+
+                same_label = classification1["label"] == classification2["label"]
+                conf1 = classification1["confidence"]
+                conf2 = classification2["confidence"]
+                dom1 = classification1["dominance_ratio"]
+                dom2 = classification2["dominance_ratio"]
+                best_score_1 = classification1["best_score"]
+                best_score_2 = classification2["best_score"]
+                gap1 = classification1["best_score"] - classification1["second_score"]
+                gap2 = classification2["best_score"] - classification2["second_score"]
+
+                if same_label:
+                    st.success(
+                        f"Obě časové řady vykazují podobný orientační charakter: "
+                        f"**{classification1['label']}**."
+                    )
+                else:
+                    st.warning(
+                        f"Série 1 je orientačně klasifikována jako **{classification1['label']}**, "
+                        f"zatímco Série 2 jako **{classification2['label']}**."
+                    )
+
+                interpretation_compare_parts = []
+
+                if dom1 > dom2 + 0.08:
+                    interpretation_compare_parts.append(
+                        "Klasifikace Série 1 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
+                    )
+                elif dom2 > dom1 + 0.08:
+                    interpretation_compare_parts.append(
+                        "Klasifikace Série 2 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
+                    )
+                else:
+                    interpretation_compare_parts.append(
+                        "Obě série mají podobně výraznou dominantní interpretaci."
+                    )
+
+                if gap1 > gap2 + 1.0:
+                    interpretation_compare_parts.append(
+                        "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 1, takže její závěr je relativně stabilnější."
+                    )
+                elif gap2 > gap1 + 1.0:
+                    interpretation_compare_parts.append(
+                        "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 2, takže její závěr je relativně stabilnější."
+                    )
+                else:
+                    interpretation_compare_parts.append(
+                        "Obě série mají podobnou míru vnitřní jednoznačnosti klasifikace."
+                    )
+
+                if conf1 != conf2:
+                    interpretation_compare_parts.append(
+                        f"Jistota klasifikace je u Série 1: **{conf1}**, zatímco u Série 2: **{conf2}**."
+                    )
+                else:
+                    interpretation_compare_parts.append(
+                        f"Obě série mají stejnou slovní úroveň jistoty klasifikace: **{conf1}**."
+                    )
+
+                if best_score_1 > best_score_2 + 1.0:
+                    interpretation_compare_parts.append(
+                        "Dominantní interpretace Série 1 má vyšší absolutní podporu metrik než dominantní interpretace Série 2."
+                    )
+                elif best_score_2 > best_score_1 + 1.0:
+                    interpretation_compare_parts.append(
+                        "Dominantní interpretace Série 2 má vyšší absolutní podporu metrik než dominantní interpretace Série 1."
+                    )
+                else:
+                    interpretation_compare_parts.append(
+                        "Obě dominantní interpretace mají podobně silnou absolutní podporu metrik."
+                    )
+
+                st.info(" ".join(interpretation_compare_parts))
+                st.caption(
+                    "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
+                    "small-world charakteru, variability stupňového rozdělení a relativní dominance výsledné interpretace."
+                )
+
+                st.markdown("### Grafické porovnání procentuální podpory interpretací")
+
+                df_class_cmp = pd.DataFrame(
+                    {
+                        "Interpretace": [
+                            "Pravidelná / periodická",
+                            "Komplexní / chaotická",
+                            "Stochastická / náhodná",
+                            "Pravidelná / periodická",
+                            "Komplexní / chaotická",
+                            "Stochastická / náhodná",
+                        ],
+                        "Podpora (%)": [
+                            classification1["normalized_scores"]["Spíše pravidelná / periodická"],
+                            classification1["normalized_scores"]["Spíše komplexní deterministická / chaotická"],
+                            classification1["normalized_scores"]["Spíše stochastická / náhodná"],
+                            classification2["normalized_scores"]["Spíše pravidelná / periodická"],
+                            classification2["normalized_scores"]["Spíše komplexní deterministická / chaotická"],
+                            classification2["normalized_scores"]["Spíše stochastická / náhodná"],
+                        ],
+                        "Série": [
                             "Série 1",
-                            tech1,
-                            interp1,
-                            verdict1,
-                            classification1,
-                            n_points=len(data1),
-                            n_nodes_local=n1,
-                        )
-
-                    with col_s2:
-                        render_series_summary(
+                            "Série 1",
+                            "Série 1",
                             "Série 2",
-                            tech2,
-                            interp2,
-                            verdict2,
-                            classification2,
-                            n_points=len(data2),
-                            n_nodes_local=n2,
-                        )
+                            "Série 2",
+                            "Série 2",
+                        ],
+                    }
+                )
 
-                    st.markdown("---")
-                    st.markdown("## Porovnání sérií")
+                fig_class_cmp = px.bar(
+                    df_class_cmp,
+                    x="Interpretace",
+                    y="Podpora (%)",
+                    color="Série",
+                    barmode="group",
+                    title="Porovnání podpory jednotlivých interpretací",
+                    labels={
+                        "Interpretace": "Typ interpretace",
+                        "Podpora (%)": "Podpora (%)",
+                    },
+                )
 
-                    # =============================
-                    # Porovnání topologie HVG
-                    # =============================
-                    topology_parts = []
+                fig_class_cmp.update_layout(yaxis_range=[0, 100])
+                st.plotly_chart(fig_class_cmp, use_container_width=True)
 
-                    if not np.isnan(C1) and not np.isnan(C2):
-                        if C1 > C2:
-                            topology_parts.append("Série 1 vykazuje vyšší lokální propojenost než Série 2.")
-                        elif C2 > C1:
-                            topology_parts.append("Série 2 vykazuje vyšší lokální propojenost než Série 1.")
-                        else:
-                            topology_parts.append("Obě série mají podobnou lokální propojenost.")
+                st.markdown("### Grafické porovnání surového skóre")
 
-                    if sigma1 is not None and sigma2 is not None and not np.isnan(sigma1) and not np.isnan(sigma2):
-                        if sigma1 > sigma2:
-                            topology_parts.append("Z hlediska small-world indexu je Série 1 strukturálně výraznější.")
-                        elif sigma2 > sigma1:
-                            topology_parts.append("Z hlediska small-world indexu je Série 2 strukturálně výraznější.")
-                        else:
-                            topology_parts.append("Obě série mají podobný small-world charakter.")
-
-                    if avg_deg1 > avg_deg2:
-                        topology_parts.append("HVG Série 1 je v průměru propojenější než HVG Série 2.")
-                    elif avg_deg2 > avg_deg1:
-                        topology_parts.append("HVG Série 2 je v průměru propojenější než HVG Série 1.")
-                    else:
-                        topology_parts.append("Obě HVG mají podobnou průměrnou propojenost.")
-
-                    if entropy_deg_norm1 > entropy_deg_norm2:
-                        topology_parts.append("Série 1 má vyšší variabilitu stupňového rozdělení než Série 2.")
-                    elif entropy_deg_norm2 > entropy_deg_norm1:
-                        topology_parts.append("Série 2 má vyšší variabilitu stupňového rozdělení než Série 1.")
-                    else:
-                        topology_parts.append("Obě série mají podobnou variabilitu stupňového rozdělení.")
-
-                    st.markdown("**Porovnání topologie HVG**")
-                    st.info(" ".join(topology_parts))
-
-                    # =============================
-                    # Porovnání výsledné interpretace
-                    # =============================
-                    st.markdown("**Porovnání výsledné interpretace**")
-
-                    same_label = classification1["label"] == classification2["label"]
-                    conf1 = classification1["confidence"]
-                    conf2 = classification2["confidence"]
-                    dom1 = classification1["dominance_ratio"]
-                    dom2 = classification2["dominance_ratio"]
-                    best_score_1 = classification1["best_score"]
-                    best_score_2 = classification2["best_score"]
-                    gap1 = classification1["best_score"] - classification1["second_score"]
-                    gap2 = classification2["best_score"] - classification2["second_score"]
-
-                    if same_label:
-                        st.success(
-                            f"Obě časové řady vykazují podobný orientační charakter: "
-                            f"**{classification1['label']}**."
-                        )
-                    else:
-                        st.warning(
-                            f"Série 1 je orientačně klasifikována jako **{classification1['label']}**, "
-                            f"zatímco Série 2 jako **{classification2['label']}**."
-                        )
-
-                    interpretation_compare_parts = []
-
-                    if dom1 > dom2 + 0.08:
-                        interpretation_compare_parts.append(
-                            "Klasifikace Série 1 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
-                        )
-                    elif dom2 > dom1 + 0.08:
-                        interpretation_compare_parts.append(
-                            "Klasifikace Série 2 působí přesvědčivěji, protože dominantní interpretace je zde výraznější."
-                        )
-                    else:
-                        interpretation_compare_parts.append(
-                            "Obě série mají podobně výraznou dominantní interpretaci."
-                        )
-
-                    if gap1 > gap2 + 1.0:
-                        interpretation_compare_parts.append(
-                            "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 1, takže její závěr je relativně stabilnější."
-                        )
-                    elif gap2 > gap1 + 1.0:
-                        interpretation_compare_parts.append(
-                            "Rozdíl mezi nejsilnější a druhou nejsilnější interpretací je větší u Série 2, takže její závěr je relativně stabilnější."
-                        )
-                    else:
-                        interpretation_compare_parts.append(
-                            "Obě série mají podobnou míru vnitřní jednoznačnosti klasifikace."
-                        )
-
-                    if conf1 != conf2:
-                        interpretation_compare_parts.append(
-                            f"Jistota klasifikace je u Série 1: **{conf1}**, zatímco u Série 2: **{conf2}**."
-                        )
-                    else:
-                        interpretation_compare_parts.append(
-                            f"Obě série mají stejnou slovní úroveň jistoty klasifikace: **{conf1}**."
-                        )
-
-                    if best_score_1 > best_score_2 + 1.0:
-                        interpretation_compare_parts.append(
-                            "Dominantní interpretace Série 1 má vyšší absolutní podporu metrik než dominantní interpretace Série 2."
-                        )
-                    elif best_score_2 > best_score_1 + 1.0:
-                        interpretation_compare_parts.append(
-                            "Dominantní interpretace Série 2 má vyšší absolutní podporu metrik než dominantní interpretace Série 1."
-                        )
-                    else:
-                        interpretation_compare_parts.append(
-                            "Obě dominantní interpretace mají podobně silnou absolutní podporu metrik."
-                        )
-
-                    st.info(" ".join(interpretation_compare_parts))
-                    st.caption(
-                        "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
-                        "small-world charakteru, variability stupňového rozdělení a relativní dominance výsledné interpretace."
-                    )
-
-                    # =============================
-                    # Grafické porovnání procentuální podpory
-                    # =============================
-                    st.markdown("### Grafické porovnání procentuální podpory interpretací")
-
-                    df_class_cmp = pd.DataFrame(
-                        {
-                            "Interpretace": [
-                                "Pravidelná / periodická",
-                                "Komplexní / chaotická",
-                                "Stochastická / náhodná",
-                                "Pravidelná / periodická",
-                                "Komplexní / chaotická",
-                                "Stochastická / náhodná",
-                            ],
-                            "Podpora (%)": [
-                                classification1["normalized_scores"]["Spíše pravidelná / periodická"],
-                                classification1["normalized_scores"]["Spíše komplexní deterministická / chaotická"],
-                                classification1["normalized_scores"]["Spíše stochastická / náhodná"],
-                                classification2["normalized_scores"]["Spíše pravidelná / periodická"],
-                                classification2["normalized_scores"]["Spíše komplexní deterministická / chaotická"],
-                                classification2["normalized_scores"]["Spíše stochastická / náhodná"],
-                            ],
-                            "Série": [
-                                "Série 1",
-                                "Série 1",
-                                "Série 1",
-                                "Série 2",
-                                "Série 2",
-                                "Série 2",
-                            ],
-                        }
-                    )
-
-                    fig_class_cmp = px.bar(
-                        df_class_cmp,
-                        x="Interpretace",
-                        y="Podpora (%)",
-                        color="Série",
-                        barmode="group",
-                        title="Porovnání podpory jednotlivých interpretací",
-                        labels={
-                            "Interpretace": "Typ interpretace",
-                            "Podpora (%)": "Podpora (%)",
-                        },
-                    )
-
-                    fig_class_cmp.update_layout(yaxis_range=[0, 100])
-                    st.plotly_chart(fig_class_cmp, use_container_width=True)
-
-                    # =============================
-                    # Grafické porovnání surového skóre
-                    # =============================
-                    st.markdown("### Grafické porovnání surového skóre")
-
-                    scores_compare_df = pd.DataFrame({
+                scores_compare_df = pd.DataFrame(
+                    {
                         "Interpretace": list(classification1["scores"].keys()),
                         "Série 1": list(classification1["scores"].values()),
                         "Série 2": list(classification2["scores"].values()),
-                    })
+                    }
+                )
 
-                    scores_compare_long = scores_compare_df.melt(
-                        id_vars="Interpretace",
-                        var_name="Série",
-                        value_name="Skóre"
+                scores_compare_long = scores_compare_df.melt(
+                    id_vars="Interpretace",
+                    var_name="Série",
+                    value_name="Skóre",
+                )
+
+                fig_scores_cmp = px.bar(
+                    scores_compare_long,
+                    x="Interpretace",
+                    y="Skóre",
+                    color="Série",
+                    barmode="group",
+                    title="Porovnání skóre klasifikace obou sérií",
+                    text="Skóre",
+                )
+
+                fig_scores_cmp.update_traces(textposition="outside")
+                fig_scores_cmp.update_layout(
+                    xaxis_title="Typ interpretace",
+                    yaxis_title="Skóre podpory",
+                )
+
+                st.plotly_chart(fig_scores_cmp, use_container_width=True)
+
+                st.caption(
+                    "Procentuální graf ukazuje relativní rozdělení podpory mezi interpretace. "
+                    "Graf se surovým skóre ukazuje absolutní sílu podpory jednotlivých směrů."
+                )
+
+                st.markdown("### Stručný závěr porovnání")
+
+                final_compare_parts = [
+                    f"U Série 1 dominuje interpretace **{classification1['label']}** se silou **{classification1['best_score']:.1f} bodu**.",
+                    f"U Série 2 dominuje interpretace **{classification2['label']}** se silou **{classification2['best_score']:.1f} bodu**.",
+                ]
+
+                if classification1["label"] == classification2["label"]:
+                    final_compare_parts.append(
+                        "Obě série směřují ke stejnému orientačnímu typu dynamiky."
+                    )
+                else:
+                    final_compare_parts.append(
+                        "Série se z hlediska HVG klasifikace liší, takže jejich strukturální charakter není stejný."
                     )
 
-                    fig_scores_cmp = px.bar(
-                        scores_compare_long,
-                        x="Interpretace",
-                        y="Skóre",
-                        color="Série",
-                        barmode="group",
-                        title="Porovnání skóre klasifikace obou sérií",
-                        text="Skóre",
+                if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
+                    final_compare_parts.append(
+                        "U Série 1 je dominantní interpretace výraznější než u Série 2."
+                    )
+                elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
+                    final_compare_parts.append(
+                        "U Série 2 je dominantní interpretace výraznější než u Série 1."
+                    )
+                else:
+                    final_compare_parts.append(
+                        "Dominance hlavní interpretace je u obou sérií podobná."
                     )
 
-                    fig_scores_cmp.update_traces(textposition="outside")
-                    fig_scores_cmp.update_layout(
-                        xaxis_title="Typ interpretace",
-                        yaxis_title="Skóre podpory",
+                st.success(" ".join(final_compare_parts))
+
+                if experiment_name_cmp.strip():
+                    st.caption(f"Název porovnání: {experiment_name_cmp}")
+
+                same_label_cmp = classification1["label"] == classification2["label"]
+
+                if not np.isnan(C1) and not np.isnan(C2):
+                    if C1 > C2:
+                        topology_winner = "Série 1"
+                    elif C2 > C1:
+                        topology_winner = "Série 2"
+                    else:
+                        topology_winner = "obě série podobně"
+                else:
+                    topology_winner = "nelze jednoznačně určit"
+
+                if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
+                    dominance_winner = "Série 1"
+                elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
+                    dominance_winner = "Série 2"
+                else:
+                    dominance_winner = "obě série podobně"
+
+                report_col1, report_col2, report_col3 = st.columns(3)
+
+                with report_col1:
+                    st.markdown("**Hlavní interpretace – Série 1**")
+                    st.success(classification1["label"])
+                    st.caption(f"Jistota: {classification1['confidence']}")
+
+                with report_col2:
+                    st.markdown("**Hlavní interpretace – Série 2**")
+                    st.success(classification2["label"])
+                    st.caption(f"Jistota: {classification2['confidence']}")
+
+                with report_col3:
+                    st.metric(
+                        "Shoda interpretace",
+                        "ANO" if same_label_cmp else "NE",
+                    )
+                    st.metric(
+                        "Výraznější dominance",
+                        dominance_winner,
                     )
 
-                    st.plotly_chart(fig_scores_cmp, use_container_width=True)
+                report_text_parts = []
 
-                    st.caption(
-                        "Procentuální graf ukazuje relativní rozdělení podpory mezi interpretace. "
-                        "Graf se surovým skóre ukazuje absolutní sílu podpory jednotlivých směrů."
-                    )
-
-                    # =============================
-                    # Stručný závěr porovnání
-                    # =============================
-                    st.markdown("### Stručný závěr porovnání")
-
-                    final_compare_parts = [
-                        f"U Série 1 dominuje interpretace **{classification1['label']}** se silou **{classification1['best_score']:.1f} bodu**.",
-                        f"U Série 2 dominuje interpretace **{classification2['label']}** se silou **{classification2['best_score']:.1f} bodu**.",
-                    ]
-
-                    if classification1["label"] == classification2["label"]:
-                        final_compare_parts.append(
-                            "Obě série směřují ke stejnému orientačnímu typu dynamiky."
-                        )
-                    else:
-                        final_compare_parts.append(
-                            "Série se z hlediska HVG klasifikace liší, takže jejich strukturální charakter není stejný."
-                        )
-
-                    if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
-                        final_compare_parts.append(
-                            "U Série 1 je dominantní interpretace výraznější než u Série 2."
-                        )
-                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
-                        final_compare_parts.append(
-                            "U Série 2 je dominantní interpretace výraznější než u Série 1."
-                        )
-                    else:
-                        final_compare_parts.append(
-                            "Dominance hlavní interpretace je u obou sérií podobná."
-                        )
-
-                    st.success(" ".join(final_compare_parts))
-
-                    if experiment_name_cmp.strip():
-                        st.caption(f"Název porovnání: {experiment_name_cmp}")
-
-                    same_label_cmp = classification1["label"] == classification2["label"]
-
-                    if not np.isnan(C1) and not np.isnan(C2):
-                        if C1 > C2:
-                            topology_winner = "Série 1"
-                        elif C2 > C1:
-                            topology_winner = "Série 2"
-                        else:
-                            topology_winner = "obě série podobně"
-                    else:
-                        topology_winner = "nelze jednoznačně určit"
-
-                    if classification1["dominance_ratio"] > classification2["dominance_ratio"]:
-                        dominance_winner = "Série 1"
-                    elif classification2["dominance_ratio"] > classification1["dominance_ratio"]:
-                        dominance_winner = "Série 2"
-                    else:
-                        dominance_winner = "obě série podobně"
-
-                    report_col1, report_col2, report_col3 = st.columns(3)
-
-                    with report_col1:
-                        st.markdown("**Hlavní interpretace – Série 1**")
-                        st.success(classification1["label"])
-                        st.caption(f"Jistota: {classification1['confidence']}")
-
-                    with report_col2:
-                        st.markdown("**Hlavní interpretace – Série 2**")
-                        st.success(classification2["label"])
-                        st.caption(f"Jistota: {classification2['confidence']}")
-
-                    with report_col3:
-                        st.metric(
-                            "Shoda interpretace",
-                            "ANO" if same_label_cmp else "NE"
-                        )
-                        st.metric(
-                            "Výraznější dominance",
-                            dominance_winner
-                        )
-
-                    report_text_parts = []
-
-                    if same_label_cmp:
-                        report_text_parts.append(
-                            "Obě série směřují ke stejnému hlavnímu typu interpretace."
-                        )
-                    else:
-                        report_text_parts.append(
-                            "Každá série směřuje k odlišné hlavní interpretaci."
-                        )
-
+                if same_label_cmp:
                     report_text_parts.append(
-                        f"Z hlediska lokální struktury a topologie působí výrazněji: **{topology_winner}**."
+                        "Obě série směřují ke stejnému hlavnímu typu interpretace."
                     )
-
+                else:
                     report_text_parts.append(
-                        f"Z hlediska jednoznačnosti klasifikace působí přesvědčivěji: **{dominance_winner}**."
+                        "Každá série směřuje k odlišné hlavní interpretaci."
                     )
 
-                    st.info(" ".join(report_text_parts))
+                report_text_parts.append(
+                    f"Z hlediska lokální struktury a topologie působí výrazněji: **{topology_winner}**."
+                )
 
-                    # =============================
-                    # Export souhrnné klasifikace do CSV
-                    # =============================
-                    st.markdown("### Export souhrnné klasifikace")
+                report_text_parts.append(
+                    f"Z hlediska jednoznačnosti klasifikace působí přesvědčivěji: **{dominance_winner}**."
+                )
 
-                    summary_export_df = pd.DataFrame([
+                st.info(" ".join(report_text_parts))
+
+                st.markdown("### Export souhrnné klasifikace")
+
+                summary_export_df = pd.DataFrame(
+                    [
                         {
                             "experiment_name": experiment_name_cmp,
                             "series": "Série 1",
@@ -5829,18 +5678,20 @@ else:  # "Porovnat dvě časové řady"
                             "second_score": classification2["second_score"],
                             "verdict": verdict2,
                         },
-                    ])
+                    ]
+                )
 
-                    summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8")
+                summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8")
 
-                    st.download_button(
-                        "Exportovat souhrnnou klasifikaci porovnání (CSV)",
-                        data=summary_export_csv,
-                        file_name="comparison_summary_classification.csv",
-                        mime="text/csv",
-                    )
+                st.download_button(
+                    "Exportovat souhrnnou klasifikaci porovnání (CSV)",
+                    data=summary_export_csv,
+                    file_name="comparison_summary_classification.csv",
+                    mime="text/csv",
+                )
+
             # =============================
-            #  Arc Diagram HVG – obě série
+            # Arc Diagram HVG – obě série
             # =============================
             if "Arc Diagram HVG" in selected_sections_cmp:
                 st.markdown("### Arc Diagramy HVG – porovnání")
@@ -5871,7 +5722,6 @@ else:  # "Porovnat dvě časové řady"
             if "Export HVG a metrik" in selected_sections_cmp:
                 st.markdown("### Export HVG a metrik pro obě série")
 
-                # Série 1
                 edges_df1 = pd.DataFrame(list(G1.edges()), columns=["source", "target"])
                 edges_csv1 = edges_df1.to_csv(index=False).encode("utf-8")
                 adj_df1 = nx.to_pandas_adjacency(G1)
@@ -5895,7 +5745,6 @@ else:  # "Porovnat dvě časové řady"
                 metrics_df1 = pd.DataFrame([metrics_dict1])
                 metrics_csv1 = metrics_df1.to_csv(index=False).encode("utf-8")
 
-                # Série 2
                 edges_df2 = pd.DataFrame(list(G2.edges()), columns=["source", "target"])
                 edges_csv2 = edges_df2.to_csv(index=False).encode("utf-8")
                 adj_df2 = nx.to_pandas_adjacency(G2)

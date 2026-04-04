@@ -1,11 +1,11 @@
 import numpy as np
 import networkx as nx
-from app import compute_graph_metrics
-from services.metrics import compute_basic_metrics, SmallWorldAnalyzer
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+import streamlit as st
 
+from services.hvg_graph import build_hvg, build_configuration_graph_from_hvg
 
 # Zkusíme importovat powerlaw – pokud není, jen nastavíme flag
 try:
@@ -19,34 +19,22 @@ except ImportError:
 #  HVG – pomocné funkce
 # =========================
 
-def build_hvg(data):
-    """
-    Vytvoří Horizontal Visibility Graph (HVG) z časové řady `data`.
-    Vrcholy jsou indexy časové řady 0..n-1, hrana (i, j) existuje,
-    pokud pro všechny k mezi i a j platí:
-        data[k] < data[i] a data[k] < data[j].
-    """
+
+
+
+@st.cache_data(show_spinner=False)
+def build_hvg_cached_edges(data_tuple):
+    data = np.array(data_tuple, dtype=float)
+    G = build_hvg(data)
+    return list(G.edges()), len(data)
+
+
+def build_hvg_cached(data):
+    edges, n = build_hvg_cached_edges(tuple(np.asarray(data, dtype=float)))
     G = nx.Graph()
-    n = len(data)
     G.add_nodes_from(range(n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            if all(data[k] < data[i] and data[k] < data[j] for k in range(i + 1, j)):
-                G.add_edge(i, j)
+    G.add_edges_from(edges)
     return G
-
-
-def build_configuration_graph_from_hvg(G, seed=42):
-    """
-    Vytvoří jednoduchý konfigurační graf (null model)
-    se stejnou stupňovou posloupností jako HVG graf G.
-    """
-    degrees = [d for _, d in G.degree()]
-    H_multi = nx.configuration_model(degrees, seed=seed)
-    H = nx.Graph(H_multi)          # převedeme na jednoduchý graf
-    H.remove_edges_from(nx.selfloop_edges(H))  # odstraníme smyčky
-    return H
-
 
 # =========================
 #  Entropie / statistika
@@ -70,49 +58,53 @@ def shannon_entropy(x, bins="auto"):
 #  Small-world + metriky grafu
 # =========================
 
-def compute_graph_basic_metrics(G):
-    """
-    Spočítá základní metriky grafu G a vrátí je jako slovník:
-        - n_nodes, n_edges
-        - degrees (list)
-        - avg_deg
-        - C (average clustering)
-        - is_conn (bool)
-        - L (average shortest path length nebo None)
-        - diameter (průměr grafu nebo None)
-        - assort (degree assortativity nebo None)
-    """
-    n_nodes = G.number_of_nodes()
+@st.cache_data(show_spinner=False)
+def compute_graph_metrics_cached(edges_tuple, n_nodes):
+    G = nx.Graph()
+    G.add_nodes_from(range(n_nodes))
+    G.add_edges_from(edges_tuple)
+
     n_edges = G.number_of_edges()
 
     degrees = [d for _, d in G.degree()]
     avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
 
-    # Clustering
     try:
         C = nx.average_clustering(G)
     except Exception:
         C = float("nan")
 
-    # Souvislost, délky cest, průměr
     is_conn = nx.is_connected(G) if n_nodes > 0 else False
+
     L = None
-    diameter = None
+    diam = None
     if is_conn and n_nodes > 1:
         try:
             L = nx.average_shortest_path_length(G)
         except Exception:
             L = None
         try:
-            diameter = nx.diameter(G)
+            diam = nx.diameter(G)
         except Exception:
-            diameter = None
+            diam = None
 
-    # Assortativita stupňů
     try:
         assort = nx.degree_assortativity_coefficient(G)
     except Exception:
         assort = None
+
+    L_rand = None
+    C_rand = None
+    if n_nodes > 1 and avg_deg > 1:
+        try:
+            L_rand = np.log(n_nodes) / np.log(avg_deg)
+            C_rand = avg_deg / n_nodes
+        except Exception:
+            L_rand = None
+            C_rand = None
+
+    analyzer = SmallWorldAnalyzer(C, L, C_rand, L_rand)
+    sigma = analyzer.sigma
 
     return {
         "n_nodes": n_nodes,
@@ -122,60 +114,57 @@ def compute_graph_basic_metrics(G):
         "C": C,
         "is_conn": is_conn,
         "L": L,
-        "diameter": diameter,
+        "diam": diam,
         "assort": assort,
+        "L_rand": L_rand,
+        "C_rand": C_rand,
+        "sigma": sigma,
     }
+
+
+def compute_graph_metrics(G):
+    edges_tuple = tuple(sorted(tuple(sorted(edge)) for edge in G.edges()))
+    n_nodes = G.number_of_nodes()
+
+    metrics = compute_graph_metrics_cached(edges_tuple, n_nodes)
+    metrics = dict(metrics)
+    metrics["analyzer"] = SmallWorldAnalyzer(
+        metrics["C"],
+        metrics["L"],
+        metrics["C_rand"],
+        metrics["L_rand"],
+    )
+    return metrics
 
 def compute_configuration_model_metrics(G, seed=42):
     G_conf = build_configuration_graph_from_hvg(G, seed=seed)
     metrics = compute_graph_metrics(G_conf)
     return G_conf, metrics
 
-def compute_graph_layout(G, layout_type="spring", seed=42):
+@st.cache_data(show_spinner=False)
+def compute_graph_layout_cached(edges_tuple, n_nodes, layout_type="spring", seed=42):
+    G = nx.Graph()
+    G.add_nodes_from(range(n_nodes))
+    G.add_edges_from(edges_tuple)
+
     if layout_type == "planar":
         try:
             is_planar, _ = nx.check_planarity(G)
             if is_planar:
-                return nx.planar_layout(G)
+                pos = nx.planar_layout(G)
+                return {node: (float(x), float(y)) for node, (x, y) in pos.items()}
         except Exception:
             pass
 
-    return nx.spring_layout(G, seed=seed)
-
-def unpack_graph_metrics(metrics):
-    return (
-        metrics["n_nodes"],
-        metrics["n_edges"],
-        metrics["degrees"],
-        metrics["avg_deg"],
-        metrics["C"],
-        metrics["is_conn"],
-        metrics["L"],
-        metrics["diam"],
-        metrics["assort"],
-        metrics["L_rand"],
-        metrics["C_rand"],
-        metrics["sigma"],
-    )
-    
+    pos = nx.spring_layout(G, seed=seed)
+    return {node: (float(x), float(y)) for node, (x, y) in pos.items()}
 
 
-def estimate_er_random_graph_metrics(n_nodes, avg_deg):
-    """
-    Odhad teoretických metrik pro náhodný graf G(N, p) se
-    stejným průměrným stupněm avg_deg:
-        L_rand ≈ log(N) / log(k)
-        C_rand ≈ k / N
-    Vrací (L_rand, C_rand), případně (None, None).
-    """
-    if n_nodes <= 1 or avg_deg <= 1:
-        return None, None
-    try:
-        L_rand = np.log(n_nodes) / np.log(avg_deg)
-        C_rand = avg_deg / n_nodes
-        return L_rand, C_rand
-    except Exception:
-        return None, None
+def compute_graph_layout(G, layout_type="spring", seed=42):
+    edges_tuple = tuple(sorted(tuple(sorted(edge)) for edge in G.edges()))
+    n_nodes = G.number_of_nodes()
+    pos_dict = compute_graph_layout_cached(edges_tuple, n_nodes, layout_type=layout_type, seed=seed)
+    return {node: np.array(coords) for node, coords in pos_dict.items()}
 
 
 class SmallWorldAnalyzer:
@@ -245,61 +234,7 @@ class SmallWorldAnalyzer:
 #  Volitelný wrapper na power-law fit
 # =========================
 
-def fit_powerlaw_to_degrees(degrees, discrete=True, xmin=None):
-    """
-    Pomocná funkce pro power-law fit stupňového rozdělení.
-    Používá balík `powerlaw`, pokud je k dispozici.
 
-    Parameters
-    ----------
-    degrees : sekvence stupňů (např. list[int])
-    discrete : bool – použít discrete=True ve fitu
-    xmin : volitelné k_min, pokud chceme zadat ručně (jinak se odhadne)
-
-    Returns
-    -------
-    dict nebo None:
-        {
-          "alpha": ...,
-          "xmin": ...,
-          "R": ...,
-          "p": ...,
-          "fit": powerlaw.Fit objekt
-        }
-    nebo None pokud:
-        - powerlaw není nainstalován
-        - dat je málo
-        - dojde k chybě
-    """
-    if not HAS_POWERLAW:
-        return None
-
-    # filtrujeme jen stupně >= 1
-    degs = np.array([d for d in degrees if d > 0])
-    if len(degs) < 10:
-        return None
-
-    try:
-        fit_kwargs = dict(discrete=discrete, verbose=False)
-        if xmin is not None:
-            fit_kwargs["xmin"] = xmin
-
-        fit = powerlaw.Fit(degs, **fit_kwargs)
-        alpha = fit.power_law.alpha
-        xmin_est = fit.power_law.xmin
-
-        # porovnání power-law vs. exponenciální rozdělení
-        R, p = fit.distribution_compare("power_law", "exponential")
-
-        return {
-            "alpha": alpha,
-            "xmin": xmin_est,
-            "R": R,
-            "p": p,
-            "fit": fit,
-        }
-    except Exception:
-        return None
 
 def prepare_network_traces(
     G,
@@ -358,8 +293,10 @@ def prepare_network_traces(
     )
 
     return edge_trace, node_trace
-def compute_degree_distribution_metrics(degrees):
-    degrees = list(degrees)
+
+@st.cache_data(show_spinner=False)
+def compute_degree_distribution_metrics_cached(degrees_tuple):
+    degrees = list(degrees_tuple)
 
     if len(degrees) == 0:
         return {
@@ -389,7 +326,6 @@ def compute_degree_distribution_metrics(degrees):
         entropy_deg_norm = 0.0
 
     cdf = np.cumsum(pk)
-
     peak_degree = unique_deg[np.argmax(pk)] if len(pk) > 0 else None
 
     return {
@@ -408,6 +344,9 @@ def compute_degree_distribution_metrics(degrees):
         "cdf": cdf,
     }
 
+
+def compute_degree_distribution_metrics(degrees):
+    return compute_degree_distribution_metrics_cached(tuple(degrees))
 
 def classify_entropy_level(entropy_deg_norm):
     if entropy_deg_norm < 0.2:
