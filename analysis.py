@@ -238,21 +238,57 @@ class SmallWorldAnalyzer:
 
 def prepare_network_traces(
     G,
-    pos,
+    pos=None,
     node_color="skyblue",
     node_size=10,
     edge_color="#888",
     edge_width=1,
     show_labels=False,
     hover_texts=None,
-    text_color="black",
 ):
-    edge_x, edge_y = [], []
+    import networkx as nx
+    import plotly.graph_objects as go
+
+    # Prázdný graf
+    if G is None or G.number_of_nodes() == 0:
+        edge_trace = go.Scatter(
+            x=[],
+            y=[],
+            mode="lines",
+            line=dict(width=edge_width, color=edge_color),
+            hoverinfo="none",
+        )
+        node_trace = go.Scatter(
+            x=[],
+            y=[],
+            mode="markers",
+            hoverinfo="text",
+            marker=dict(size=node_size, color=node_color, line_width=1),
+        )
+        return edge_trace, node_trace
+
+    # Pokud pozice nejsou dodané, vytvoř je
+    if pos is None:
+        pos = nx.spring_layout(G, seed=42)
+
+    # Pokud některý uzel v pos chybí, přepočítej layout pro celý graf
+    missing_nodes = [node for node in G.nodes() if node not in pos]
+    if missing_nodes:
+        pos = nx.spring_layout(G, seed=42)
+
+    # Hrany
+    edge_x = []
+    edge_y = []
+
     for u, v in G.edges():
+        if u not in pos or v not in pos:
+            continue
+
         x0, y0 = pos[u]
         x1, y1 = pos[v]
-        edge_x += [x0, x1, None]
-        edge_y += [y0, y1, None]
+
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
 
     edge_trace = go.Scatter(
         x=edge_x,
@@ -262,34 +298,45 @@ def prepare_network_traces(
         hoverinfo="none",
     )
 
-    node_x, node_y = [], []
-    for node in G.nodes():
+    # Uzly
+    node_x = []
+    node_y = []
+    node_hover = []
+    node_labels = []
+
+    nodes_list = list(G.nodes())
+
+    for i, node in enumerate(nodes_list):
+        if node not in pos:
+            continue
+
         x, y = pos[node]
         node_x.append(x)
         node_y.append(y)
 
-    if show_labels:
-        node_mode = "markers+text"
-        node_text = [str(n) for n in G.nodes()]
-        text_position = "bottom center"
-    else:
-        node_mode = "markers"
-        node_text = None
-        text_position = None
+        if hover_texts is not None and i < len(hover_texts):
+            node_hover.append(hover_texts[i])
+        else:
+            node_hover.append(f"Vrchol: {node}")
 
-    if hover_texts is None:
-        hover_texts = [f"Vrchol: {n}" for n in G.nodes()]
+        node_labels.append(str(node))
+
+    node_mode = "markers+text" if show_labels else "markers"
 
     node_trace = go.Scatter(
         x=node_x,
         y=node_y,
         mode=node_mode,
-        text=node_text,
-        textposition=text_position,
+        text=node_labels if show_labels else None,
+        textposition="bottom center" if show_labels else None,
         hoverinfo="text",
-        hovertext=hover_texts,
-        marker=dict(size=node_size, color=node_color, line_width=1),
-        textfont=dict(size=10, color=text_color),
+        hovertext=node_hover,
+        marker=dict(
+            size=node_size,
+            color=node_color,
+            line_width=1,
+        ),
+        textfont=dict(size=10, color="black"),
     )
 
     return edge_trace, node_trace

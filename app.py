@@ -295,6 +295,8 @@ def infer_series_type(series_name):
 
     return None
 
+def normalize_graph_node(value):
+    return str(value).strip()
 
 def generate_hvg_summary_text(
     n_nodes,
@@ -2408,7 +2410,11 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         )
 
         if st.sidebar.button("Vytvořit graf z node listu"):
-            tokens = [t.strip() for t in re.split(r"[,\s;]+", nodes_text) if t.strip() != ""]
+            tokens = [
+                normalize_graph_node(t)
+                for t in re.split(r"[,\s;]+", nodes_text)
+                if str(t).strip() != ""
+            ]
             Gc = nx.Graph()
             Gc.add_nodes_from(tokens)
             custom_graph = Gc
@@ -2428,7 +2434,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 line = line.strip()
                 if not line:
                     continue
-                parts = [p.strip() for p in re.split(r"[,\s;]+", line) if p.strip() != ""]
+                parts = [normalize_graph_node(p) for p in re.split(r"[,\s;]+", line) if str(p).strip() != ""]
                 if len(parts) >= 2:
                     u, v = parts[0], parts[1]
                     Gc.add_edge(u, v)
@@ -2448,7 +2454,11 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         )
 
         if st.sidebar.button("Vytvořit graf z node + edge listu"):
-            tokens = [t.strip() for t in re.split(r"[,\s;]+", nodes_text) if t.strip() != ""]
+            tokens = [
+                normalize_graph_node(t)
+                for t in re.split(r"[,\s;]+", nodes_text)
+                if str(t).strip() != ""
+            ]
             Gc = nx.Graph()
             Gc.add_nodes_from(tokens)
 
@@ -2456,7 +2466,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 line = line.strip()
                 if not line:
                     continue
-                parts = [p.strip() for p in re.split(r"[,\s;]+", line) if p.strip() != ""]
+                parts = [normalize_graph_node(p) for p in re.split(r"[,\s;]+", line) if str(p).strip() != ""]
                 if len(parts) >= 2:
                     u, v = parts[0], parts[1]
                     Gc.add_edge(u, v)
@@ -2498,8 +2508,8 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                     if st.sidebar.button("Vytvořit graf z CSV edge listu"):
                         Gc = nx.Graph()
                         for _, row in df_edges.iterrows():
-                            u = str(row[col1])
-                            v = str(row[col2])
+                            u = normalize_graph_node(row[col1])
+                            v = normalize_graph_node(row[col2])
                             Gc.add_edge(u, v)
 
                         custom_graph = Gc
@@ -2547,7 +2557,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                     )
 
                 for n in nodes_df[node_col]:
-                    G_custom.add_node(str(n))
+                    G_custom.add_node(normalize_graph_node(n))
 
                 if edges_df.shape[1] >= 2:
                     col1, col2 = st.sidebar.columns(2)
@@ -2567,7 +2577,10 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                         )
 
                     for _, row in edges_df.iterrows():
-                        G_custom.add_edge(str(row[source_col]), str(row[target_col]))
+                        G_custom.add_edge(
+                            normalize_graph_node(row[source_col]),
+                            normalize_graph_node(row[target_col]),
+                        )
 
                 st.session_state.custom_graph = G_custom
 
@@ -2757,8 +2770,12 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 key="custom_subgraph_nodes",
             )
 
-            tokens_c = [t.strip() for t in re.split(r"[,\s;]+", sub_nodes_text_c) if t.strip() != ""]
-            available_nodes_c = {str(n): n for n in Gc.nodes()}
+            tokens_c = [
+                normalize_graph_node(t)
+                for t in re.split(r"[,\s;]+", sub_nodes_text_c)
+                if str(t).strip() != ""
+            ]
+            available_nodes_c = {normalize_graph_node(n): n for n in Gc.nodes()}
             valid_nodes_c = [available_nodes_c[t] for t in tokens_c if t in available_nodes_c]
             valid_nodes_c = list(dict.fromkeys(valid_nodes_c))
 
