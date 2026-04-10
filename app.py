@@ -7,6 +7,7 @@ import networkx as nx
 import plotly.express as px
 import plotly.graph_objects as go
 import re 
+import datetime as dt
 from io import BytesIO
 
 st.set_page_config(page_title="HVG Vizualizátor", layout="wide")
@@ -109,10 +110,10 @@ def load_csv_series(
 
             if selection_mode == "date":
                 if start_date is None or end_date is None:
-                    return df, None, None, "Není zadaný rozsah data."
+                    return df, None, None, "Není zadaný rozsah data/času."
 
                 start_dt = pd.to_datetime(start_date)
-                end_dt = pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                end_dt = pd.to_datetime(end_date)
 
                 if start_dt > end_dt:
                     start_dt, end_dt = end_dt, start_dt
@@ -858,8 +859,10 @@ if analysis_mode == "Časová řada → HVG":
     csv_has_header = True
     csv_datetime_column = "Žádný"
     selection_mode_main = "index"
-    csv_start_date = None
-    csv_end_date = None
+    csv_start_time = None
+    csv_end_time = None
+    csv_start_datetime = None
+    csv_end_datetime = None
     aggregation_freq_main = "bez agregace"
     aggregation_method_main = "mean"
 
@@ -1026,6 +1029,7 @@ if analysis_mode == "Časová řada → HVG":
                             "1min",
                             "5min",
                             "10min",
+                            "15min",
                             "30min",
                             "1h",
                             "1D",
@@ -1039,13 +1043,12 @@ if analysis_mode == "Časová řada → HVG":
                             options=["mean", "median", "min", "max", "sum", "last"],
                             key="csv_main_agg_method",
                         )
-
-                st.sidebar.markdown("**Výběr rozsahu dat z CSV**")
-
-                preview_meta = None
-                preview_err = None
-
+                
                 if csv_datetime_column != "Žádný" and selection_mode_main == "Podle data":
+                    dt_series = pd.to_datetime(
+                        df_preview[csv_datetime_column],
+                        errors="coerce",
+                    ).dropna()
                     dt_series = pd.to_datetime(
                         df_preview[csv_datetime_column],
                         errors="coerce",
@@ -1055,20 +1058,59 @@ if analysis_mode == "Časová řada → HVG":
                         min_dt = dt_series.min()
                         max_dt = dt_series.max()
 
-                        csv_start_date = st.sidebar.date_input(
-                            "Datum od",
-                            value=min_dt.date(),
-                            min_value=min_dt.date(),
-                            max_value=max_dt.date(),
-                            key="csv_main_date_start",
-                        )
+                        st.sidebar.markdown("**Výběr časového rozsahu**")
 
-                        csv_end_date = st.sidebar.date_input(
-                            "Datum do",
-                            value=max_dt.date(),
-                            min_value=min_dt.date(),
-                            max_value=max_dt.date(),
-                            key="csv_main_date_end",
+                        col_dt_1, col_dt_2 = st.sidebar.columns(2)
+
+                        with col_dt_1:
+                            csv_start_date = st.date_input(
+                                "Datum od",
+                                value=min_dt.date(),
+                                min_value=min_dt.date(),
+                                max_value=max_dt.date(),
+                                key="csv_main_date_start",
+                            )
+                            start_hour = st.selectbox(
+                                "Hodina od",
+                                options=list(range(24)),
+                                index=min_dt.hour,
+                                key="csv_main_start_hour",
+                            )
+                            start_minute = st.selectbox(
+                                "Minuta od",
+                                options=list(range(60)),
+                                index=min_dt.minute,
+                                key="csv_main_start_minute",
+                            )
+
+                        with col_dt_2:
+                            csv_end_date = st.date_input(
+                                "Datum do",
+                                value=max_dt.date(),
+                                min_value=min_dt.date(),
+                                max_value=max_dt.date(),
+                                key="csv_main_date_end",
+                            )
+                            end_hour = st.selectbox(
+                                "Hodina do",
+                                options=list(range(24)),
+                                index=max_dt.hour,
+                                key="csv_main_end_hour",
+                            )
+                            end_minute = st.selectbox(
+                                "Minuta do",
+                                options=list(range(60)),
+                                index=max_dt.minute,
+                                key="csv_main_end_minute",
+                            )
+
+                        csv_start_datetime = dt.datetime.combine(
+                            csv_start_date,
+                            dt.time(start_hour, start_minute),
+                        )
+                        csv_end_datetime = dt.datetime.combine(
+                            csv_end_date,
+                            dt.time(end_hour, end_minute),
                         )
 
                         _, _, preview_meta, preview_err = load_csv_series(
@@ -1081,8 +1123,8 @@ if analysis_mode == "Časová řada → HVG":
                             has_header=csv_has_header,
                             datetime_column=csv_datetime_column,
                             selection_mode="date",
-                            start_date=csv_start_date,
-                            end_date=csv_end_date,
+                            start_date=csv_start_datetime,
+                            end_date=csv_end_datetime,
                             aggregation_freq=aggregation_freq_main,
                             aggregation_method=aggregation_method_main,
                         )
@@ -1094,9 +1136,8 @@ if analysis_mode == "Časová řada → HVG":
                                 f"Po načtení vznikne přibližně {preview_meta['n_points']} bodů časové řady."
                             )
                     else:
-                        st.sidebar.warning(
-                            "Ve vybraném datetime sloupci nejsou platná data."
-                        )
+                        st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
+                    
 
                 else:
                     max_possible_index = max(0, len(df_preview) - 1)
@@ -1234,12 +1275,12 @@ if analysis_mode == "Časová řada → HVG":
                         else "index"
                     ),
                     start_date=(
-                        csv_start_date
+                        csv_start_datetime
                         if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data")
                         else None
                     ),
                     end_date=(
-                        csv_end_date
+                        csv_end_datetime
                         if (csv_datetime_column != "Žádný" and selection_mode_main == "Podle data")
                         else None
                     ),
@@ -1296,7 +1337,10 @@ if analysis_mode == "Časová řada → HVG":
             if mode == "Nahrát CSV":
                 if meta is not None and meta["datetime_used"]:
                     if meta["selection_mode"] == "date":
-                        st.caption(f"Datový rozsah: {csv_start_date} → {csv_end_date}")
+                        st.caption(
+                            f"Datový rozsah: {csv_start_datetime.strftime('%d.%m.%Y %H:%M:%S')} → "
+                            f"{csv_end_datetime.strftime('%d.%m.%Y %H:%M:%S')}"
+                        )
                     else:
                         st.caption(f"Indexy: {csv_start_index} → {csv_end_index}")
 
@@ -3302,6 +3346,8 @@ elif analysis_mode == "Porovnat dvě časové řady":
         csv2_end_index = 0
         csv2_start_date = None
         csv2_end_date = None
+        csv2_start_datetime = None
+        csv2_end_datetime = None
         csv2_datetime_column = "Žádný"
         selection_mode_cmp = "index"
         csv2_has_header = True
@@ -3557,6 +3603,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 "1min",
                                 "5min",
                                 "10min",
+                                "15min",
                                 "30min",
                                 "1h",
                                 "1D",
@@ -3586,20 +3633,59 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             min_dt2 = dt_series2.min()
                             max_dt2 = dt_series2.max()
 
-                            csv2_start_date = st.sidebar.date_input(
-                                "Datum od",
-                                value=min_dt2.date(),
-                                min_value=min_dt2.date(),
-                                max_value=max_dt2.date(),
-                                key="csv2_date_start",
-                            )
+                            st.sidebar.markdown("**Výběr časového rozsahu**")
 
-                            csv2_end_date = st.sidebar.date_input(
-                                "Datum do",
-                                value=max_dt2.date(),
-                                min_value=min_dt2.date(),
-                                max_value=max_dt2.date(),
-                                key="csv2_date_end",
+                            col_dt2_1, col_dt2_2 = st.sidebar.columns(2)
+
+                            with col_dt2_1:
+                                csv2_start_date = st.date_input(
+                                    "Datum od",
+                                    value=min_dt2.date(),
+                                    min_value=min_dt2.date(),
+                                    max_value=max_dt2.date(),
+                                    key="csv2_date_start",
+                                )
+                                start_hour_2 = st.selectbox(
+                                    "Hodina od",
+                                    options=list(range(24)),
+                                    index=min_dt2.hour,
+                                    key="csv2_start_hour",
+                                )
+                                start_minute_2 = st.selectbox(
+                                    "Minuta od",
+                                    options=list(range(60)),
+                                    index=min_dt2.minute,
+                                    key="csv2_start_minute",
+                                )
+
+                            with col_dt2_2:
+                                csv2_end_date = st.date_input(
+                                    "Datum do",
+                                    value=max_dt2.date(),
+                                    min_value=min_dt2.date(),
+                                    max_value=max_dt2.date(),
+                                    key="csv2_date_end",
+                                )
+                                end_hour_2 = st.selectbox(
+                                    "Hodina do",
+                                    options=list(range(24)),
+                                    index=max_dt2.hour,
+                                    key="csv2_end_hour",
+                                )
+                                end_minute_2 = st.selectbox(
+                                    "Minuta do",
+                                    options=list(range(60)),
+                                    index=max_dt2.minute,
+                                    key="csv2_end_minute",
+                                )
+
+                            csv2_start_datetime = dt.datetime.combine(
+                                csv2_start_date,
+                                dt.time(start_hour_2, start_minute_2),
+                            )
+                            csv2_end_datetime = dt.datetime.combine(
+                                csv2_end_date,
+                                dt.time(end_hour_2, end_minute_2),
                             )
 
                             _, _, preview_meta2, preview_err2 = load_csv_series(
@@ -3612,8 +3698,8 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 has_header=csv2_has_header,
                                 datetime_column=csv2_datetime_column,
                                 selection_mode="date",
-                                start_date=csv2_start_date,
-                                end_date=csv2_end_date,
+                                start_date=csv2_start_datetime,
+                                end_date=csv2_end_datetime,
                                 aggregation_freq=aggregation_freq_cmp,
                                 aggregation_method=aggregation_method_cmp,
                             )
@@ -3785,12 +3871,12 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             else "index"
                         ),
                         start_date=(
-                            csv2_start_date
+                            csv2_start_datetime
                             if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data")
                             else None
                         ),
                         end_date=(
-                            csv2_end_date
+                            csv2_end_datetime
                             if (csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data")
                             else None
                         ),
@@ -3825,7 +3911,10 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 if mode2 == "Nahrát CSV":
                     if meta2 is not None and meta2["datetime_used"]:
                         if meta2["selection_mode"] == "date":
-                            st.sidebar.caption(f"Datový rozsah série 2: {csv2_start_date} → {csv2_end_date}")
+                            st.sidebar.caption(
+                                f"Datový rozsah série 2: {csv2_start_datetime.strftime('%d.%m.%Y %H:%M:%S')} → "
+                                f"{csv2_end_datetime.strftime('%d.%m.%Y %H:%M:%S')}"
+                            )
                         else:
                             st.sidebar.caption(f"Indexy série 2: {csv2_start_index} → {csv2_end_index}")
 
@@ -3834,10 +3923,6 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 f"Agregace série 2: {meta2['aggregation_freq']} | metoda: {meta2['aggregation_method']}"
                             )
 
-                        if meta2["min_time"] is not None and meta2["max_time"] is not None:
-                            st.sidebar.caption(
-                                f"Výsledná série 2 pokrývá: {meta2['min_time']} → {meta2['max_time']}"
-                            )
                     else:
                         st.sidebar.caption(f"Indexy série 2: {csv2_start_index} → {csv2_end_index}")
 
