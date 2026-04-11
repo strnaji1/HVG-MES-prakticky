@@ -11,6 +11,16 @@ import datetime as dt
 from io import BytesIO
 
 st.set_page_config(page_title="HVG Vizualizátor", layout="wide")
+st.markdown(
+    """
+    <style>
+    div[data-baseweb="popover"] {
+        left: 80px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 # naše služby / třídy
 from services.generators import (
     generate_logistic_map,
@@ -2347,7 +2357,7 @@ if analysis_mode == "Časová řada → HVG":
                 }
             ])
 
-            summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8")
+            summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8-sig")
 
             st.download_button(
                 "Exportovat souhrnnou klasifikaci (CSV)",
@@ -2374,10 +2384,10 @@ if analysis_mode == "Časová řada → HVG":
             st.subheader("Export HVG a metrik")
 
             edges_df = pd.DataFrame(list(G.edges()), columns=["source", "target"])
-            edges_csv = edges_df.to_csv(index=False).encode("utf-8")
+            edges_csv = edges_df.to_csv(index=False).encode("utf-8-sig")
 
             adj_df = nx.to_pandas_adjacency(G)
-            adj_csv = adj_df.to_csv().encode("utf-8")
+            adj_csv = adj_df.to_csv().encode("utf-8-sig")
 
             metrics_dict = {
                 "n_nodes": n_nodes,
@@ -2397,7 +2407,7 @@ if analysis_mode == "Časová řada → HVG":
                 "powerlaw_R": powerlaw_R_result,
             }
             metrics_df = pd.DataFrame([metrics_dict])
-            metrics_csv = metrics_df.to_csv(index=False).encode("utf-8")
+            metrics_csv = metrics_df.to_csv(index=False).encode("utf-8-sig")
 
             col_exp1, col_exp2, col_exp3 = st.columns(3)
 
@@ -3218,10 +3228,10 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             st.subheader("Export HVG a metrik")
 
             edges_df_c = pd.DataFrame(list(Gc.edges()), columns=["source", "target"])
-            edges_csv_c = edges_df_c.to_csv(index=False).encode("utf-8")
+            edges_csv_c = edges_df_c.to_csv(index=False).encode("utf-8-sig")
 
             adj_df_c = nx.to_pandas_adjacency(Gc)
-            adj_csv_c = adj_df_c.to_csv().encode("utf-8")
+            adj_csv_c = adj_df_c.to_csv().encode("utf-8-sig")
 
             metrics_dict_c = {
                 "n_nodes": n_nodes_c,
@@ -3239,7 +3249,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             }
 
             metrics_df_c = pd.DataFrame([metrics_dict_c])
-            metrics_csv_c = metrics_df_c.to_csv(index=False).encode("utf-8")
+            metrics_csv_c = metrics_df_c.to_csv(index=False).encode("utf-8-sig")
 
             col_exp_c1, col_exp_c2, col_exp_c3 = st.columns(3)
 
@@ -5783,7 +5793,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     ]
                 )
 
-                summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8")
+                summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8-sig")
 
                 st.download_button(
                     "Exportovat souhrnnou klasifikaci porovnání (CSV)",
@@ -5825,9 +5835,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 st.markdown("### Export HVG a metrik pro obě série")
 
                 edges_df1 = pd.DataFrame(list(G1.edges()), columns=["source", "target"])
-                edges_csv1 = edges_df1.to_csv(index=False).encode("utf-8")
+                edges_csv1 = edges_df1.to_csv(index=False).encode("utf-8-sig")
                 adj_df1 = nx.to_pandas_adjacency(G1)
-                adj_csv1 = adj_df1.to_csv().encode("utf-8")
+                adj_csv1 = adj_df1.to_csv().encode("utf-8-sig")
                 metrics_dict1 = {
                     "n_nodes": n1,
                     "n_edges": m1,
@@ -5845,12 +5855,12 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     "powerlaw_R": powerlaw_R_result_1,
                 }
                 metrics_df1 = pd.DataFrame([metrics_dict1])
-                metrics_csv1 = metrics_df1.to_csv(index=False).encode("utf-8")
+                metrics_csv1 = metrics_df1.to_csv(index=False).encode("utf-8-sig")
 
                 edges_df2 = pd.DataFrame(list(G2.edges()), columns=["source", "target"])
-                edges_csv2 = edges_df2.to_csv(index=False).encode("utf-8")
+                edges_csv2 = edges_df2.to_csv(index=False).encode("utf-8-sig")
                 adj_df2 = nx.to_pandas_adjacency(G2)
-                adj_csv2 = adj_df2.to_csv().encode("utf-8")
+                adj_csv2 = adj_df2.to_csv().encode("utf-8-sig")
                 metrics_dict2 = {
                     "n_nodes": n2,
                     "n_edges": m2,
@@ -5868,7 +5878,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     "powerlaw_R": powerlaw_R_result_2,
                 }
                 metrics_df2 = pd.DataFrame([metrics_dict2])
-                metrics_csv2 = metrics_df2.to_csv(index=False).encode("utf-8")
+                metrics_csv2 = metrics_df2.to_csv(index=False).encode("utf-8-sig")
 
                 col_exp1, col_exp2 = st.columns(2)
 
