@@ -27,10 +27,9 @@ def build_hvg(data):
 
 def build_configuration_graph_from_hvg(G, seed=42):
     """
-    Vytvoří jednoduchý konfigurační graf (null model)
-    se stejnou stupňovou posloupností jako HVG graf `G`.
+    Vytvoří jednoduchý konfigurační graf -> stejnou stupňovou posloupností jako HVG graf `G`.
 
-    Používá NetworkX `configuration_model`, převede na obyčejný graf
+    Používá NetworkX - configuration_model, převede na obyčejný graf
     a odstraní případné self-loops.
     """
     degrees = [d for _, d in G.degree()]
