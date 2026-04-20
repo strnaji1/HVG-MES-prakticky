@@ -21,7 +21,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-# naše služby / třídy
+# služby třídy
 from services.generators import (
     generate_logistic_map,
     generate_henon_map,
@@ -1434,9 +1434,7 @@ if analysis_mode == "Časová řada → HVG":
             if st.button("HVG linky (vodorovné)"):
                 st.session_state.show_horiz = not st.session_state.show_horiz
 
-    # =========================
     # Interaktivní HVG + další sekce pod ním
-    # =========================
     if st.session_state.show_hvg and st.session_state.data is not None:
         arr = st.session_state.data
         G = build_hvg_cached(arr)
@@ -1468,7 +1466,7 @@ if analysis_mode == "Časová řada → HVG":
             ],
         )
 
-        # ====== Analytické statistiky HVG ======
+        # Analytické statistiky HVG 
         metrics_main = compute_graph_metrics(G)
 
         n_nodes = metrics_main["n_nodes"]
@@ -1496,7 +1494,7 @@ if analysis_mode == "Časová řada → HVG":
         powerlaw_p_result = None
         powerlaw_R_result = None
 
-        # ====== Konfigurační graf ======
+        # Konfigurační graf 
         G_conf, metrics_conf = compute_configuration_model_metrics(G, seed=42)
 
         n_nodes_conf = metrics_conf["n_nodes"]
@@ -1511,7 +1509,7 @@ if analysis_mode == "Časová řada → HVG":
         C_rand_conf = metrics_conf["C_rand"]
         sigma_conf = metrics_conf["sigma"]
 
-        # ====== Rozmístění HVG ======
+        # Rozmístění HVG 
         layout_option = st.radio(
             "Rozložení HVG vrcholů",
             ["Síťové (spring layout)", "Planární (pokud možné)"],
@@ -1655,7 +1653,7 @@ if analysis_mode == "Časová řada → HVG":
         )
         st.plotly_chart(fig_hvg, use_container_width=True)
 
-        # ====== Metriky HVG ======
+        # Metriky HVG a porovnání s náhodným grafem, small-world index, assortativita atd.
         if "Metriky HVG" in selected_sections:
             col_stats1, col_stats2 = st.columns(2)
 
@@ -1712,10 +1710,10 @@ if analysis_mode == "Časová řada → HVG":
                         "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
                     )
 
-        # ====== Zvýraznění v časové řadě ======
+        # Zvýraznění v časové řadě
         if "Propojení časová řada ↔ HVG" in selected_sections and n_nodes > 0:
             st.subheader("Časová řada se zvýrazněným vrcholem a sousedy")
-
+        # Zvýraznění v časové řadě
             df_ts2 = pd.DataFrame({"index": np.arange(len(arr)), "value": arr})
             fig_ts2 = px.line(
                 df_ts2,
@@ -1740,7 +1738,7 @@ if analysis_mode == "Časová řada → HVG":
                     hoverinfo="text",
                 )
             )
-
+        # Pokud jsou sousedé zvýrazněného vrcholu, přidáme je do grafu
             if len(neighbors) > 0:
                 fig_ts2.add_trace(
                     go.Scatter(
@@ -1758,12 +1756,12 @@ if analysis_mode == "Časová řada → HVG":
 
             st.plotly_chart(fig_ts2, use_container_width=True)
 
-        # ====== Konfigurační graf ======
+        # Konfigurační graf 
         if "Konfigurační graf (null model)" in selected_sections:
             st.markdown("### Konfigurační graf (null model)")
 
             col_conf1, col_conf2 = st.columns(2)
-
+        # Základní metriky konfiguračního grafu a porovnání s HVG
             with col_conf1:
                 st.markdown("**Konfigurační graf – základní metriky**")
                 st.write(f"- Počet vrcholů: **{n_nodes_conf}**")
@@ -1779,7 +1777,7 @@ if analysis_mode == "Časová řada → HVG":
                     st.write(f"- Průměr grafu (diameter_conf): **{diam_conf}**")
                 else:
                     st.write("- Průměr grafu (diameter_conf): *není k dispozici*")
-
+        # Clustering, assortativita, small-world index konfiguračního grafu a porovnání s HVG
             with col_conf2:
                 st.markdown("**Konfigurační graf – clustering, assortativita, σ_conf**")
                 st.write(f"- Clustering coefficient C_conf: **{C_conf:.3f}**")
@@ -1805,7 +1803,7 @@ if analysis_mode == "Časová řada → HVG":
                     )
 
             st.markdown("**Porovnání HVG vs. konfigurační graf (null model)**")
-
+            # Porovnání 
             if not np.isnan(C) and not np.isnan(C_conf):
                 st.write(
                     f"- Clustering HVG: **{C:.3f}**, konfigurační graf C_conf: **{C_conf:.3f}**"
@@ -1815,7 +1813,7 @@ if analysis_mode == "Časová řada → HVG":
                         "HVG má **výrazně vyšší clustering** než degree-preserving null model – "
                         "to naznačuje silnou nestrukturovanost vůči náhodnému přepojení hran."
                     )
-
+            # Porovnání délky cest
             if (L is not None) and (L_conf is not None):
                 st.write(
                     f"- Průměrná délka cesty L (HVG): **{L:.3f}**, L_conf: **{L_conf:.3f}**"
@@ -1825,7 +1823,7 @@ if analysis_mode == "Časová řada → HVG":
                         "- HVG má podobné nebo delší cesty než null model, což je konzistentní "
                         "s small-world strukturou (vyšší clustering, cesty pořád krátké)."
                     )
-
+            # Porovnání small-world indexů    
             if sigma_sw is not None and sigma_conf is not None:
                 st.write(
                     f"- Small-world index HVG: **{sigma_sw:.2f}**, "
@@ -1839,7 +1837,7 @@ if analysis_mode == "Časová řada → HVG":
 
             st.subheader("Konfigurační graf (vizualizace)")
             pos_conf = compute_graph_layout(G_conf, layout_type="spring", seed=42)
-
+            # Vizuální styl pro konfigurační graf bude jednodušší, odlišení od HVG
             edge_trace_c, node_trace_c = prepare_network_traces(
                 G_conf,
                 pos_conf,
@@ -1860,7 +1858,7 @@ if analysis_mode == "Časová řada → HVG":
             )
             st.plotly_chart(fig_conf, use_container_width=True)
 
-        # ====== Lokální analýza ======
+        # Lokální analýza
         if "Lokální analýza úseku časové řady" in selected_sections:
             st.subheader("Lokální analýza úseku časové řady")
 
@@ -1881,7 +1879,7 @@ if analysis_mode == "Časová řada → HVG":
                 f"- Délka úseku: **{len(segment)}**, "
                 f"rozsah indexů: **[{i_start}, {i_end}]**"
             )
-
+            # Základní statistiky úseku + odhad entropie
             if len(segment) > 0:
                 ent = shannon_entropy(segment, bins="auto")
                 st.write(
@@ -1890,14 +1888,14 @@ if analysis_mode == "Časová řada → HVG":
                     f"- Min: **{segment.min():.3f}**, Max: **{segment.max():.3f}**  \n"
                     f"- Shannonova entropie (odhad): **{ent:.3f}**"
                 )
-
+                # Pokud je úsek dostatečně dlouhý, spočítáme lokální HVG a jeho metriky
                 if len(segment) >= 2:
                     G_seg = build_hvg_cached(segment)
                     n_seg = G_seg.number_of_nodes()
                     m_seg = G_seg.number_of_edges()
                     degs_seg = [d for _, d in G_seg.degree()]
                     avg_deg_seg = float(np.mean(degs_seg)) if len(degs_seg) > 0 else 0.0
-
+                    # Clustering pro lokální HVG může být náročný na výpočet, zvláště pro větší úseky, proto ošetříme případné chyby
                     try:
                         C_seg = nx.average_clustering(G_seg)
                     except Exception:
@@ -1906,7 +1904,7 @@ if analysis_mode == "Časová řada → HVG":
                     is_conn_seg = nx.is_connected(G_seg) if n_seg > 0 else False
                     L_seg = None
                     diam_seg = None
-
+                    # Pro průměrnou délku cesty a diametr potřebujeme, aby byl lokální HVG souvislý a měl více než 1 vrchol
                     if is_conn_seg and n_seg > 1:
                         try:
                             L_seg = nx.average_shortest_path_length(G_seg)
@@ -1927,7 +1925,7 @@ if analysis_mode == "Časová řada → HVG":
                     if diam_seg is not None:
                         st.write(f"- Průměr grafu (lokální): **{diam_seg}**")
 
-        # ====== Podgraf HVG ======
+        #  Podgraf HVG 
         if "Podgraf HVG" in selected_sections:
             st.subheader("Podgraf HVG podle vybraných vrcholů")
 
@@ -1935,7 +1933,7 @@ if analysis_mode == "Časová řada → HVG":
                 "Seznam vrcholů pro podgraf (indexy oddělené čárkou nebo mezerami)",
                 value="0, 1, 2",
             )
-
+            # Zpracování vstupu pro výběr vrcholů podgrafu
             sub_nodes = []
             for token in re.split(r"[,\s;]+", sub_nodes_text):
                 token = token.strip()
@@ -1949,13 +1947,13 @@ if analysis_mode == "Časová řada → HVG":
                     continue
 
             sub_nodes = sorted(set(sub_nodes))
-
+            # Ověření, že vybrané vrcholy existují v grafu
             if len(sub_nodes) > 0:
                 G_sub = G.subgraph(sub_nodes).copy()
                 st.write(
                     f"Podgraf obsahuje **{G_sub.number_of_nodes()}** vrcholů a **{G_sub.number_of_edges()}** hran."
                 )
-
+                # Základní metriky podgrafu
                 degs_sub = [d for _, d in G_sub.degree()]
                 avg_deg_sub = float(np.mean(degs_sub)) if len(degs_sub) > 0 else 0.0
 
@@ -1963,7 +1961,7 @@ if analysis_mode == "Časová řada → HVG":
                     C_sub = nx.average_clustering(G_sub)
                 except Exception:
                     C_sub = float("nan")
-
+                # Pro průměrnou délku cesty a diametr podgrafu potřebujeme, aby byl souvislý a měl více než 1 vrchol
                 is_conn_sub = nx.is_connected(G_sub) if G_sub.number_of_nodes() > 0 else False
                 L_sub = None
                 diam_sub = None
@@ -1984,7 +1982,7 @@ if analysis_mode == "Časová řada → HVG":
                     st.write(f"- Průměrná délka cesty v podgrafu: **{L_sub:.3f}**")
                 if diam_sub is not None:
                     st.write(f"- Průměr podgrafu: **{diam_sub}**")
-
+                # Vizualizace podgrafu
                 edge_trace_sub, node_trace_sub = prepare_network_traces(
                     G_sub,
                     pos,
@@ -1995,7 +1993,7 @@ if analysis_mode == "Časová řada → HVG":
                     show_labels=True,
                     hover_texts=[f"Vrchol: {n}" for n in G_sub.nodes()],
                 )
-
+                # Pro podgraf použijeme stejné rozložení jako pro celý HVG, aby bylo snadné porovnat pozice vrcholů
                 fig_sub = go.Figure(data=[edge_trace_sub, node_trace_sub])
                 fig_sub.update_layout(
                     title="Podgraf HVG (vybrané vrcholy)",
@@ -2007,7 +2005,7 @@ if analysis_mode == "Časová řada → HVG":
 
         st.markdown("---")
 
-        # ====== Rozdělení stupňů + power-law ======
+        # Rozdělení stupňů + power-law 
         if "Rozdělení stupňů + power-law" in selected_sections:
             degs = degrees
             unique_deg = unique_deg_all
@@ -2021,7 +2019,7 @@ if analysis_mode == "Časová řada → HVG":
             st.subheader("Základní metriky stupňového rozdělení")
 
             col_deg_1, col_deg_2, col_deg_3, col_deg_4, col_deg_5 = st.columns(5)
-
+            # Zobrazíme základní statistiky stupňového rozdělení a entropie
             with col_deg_1:
                 st.metric("Průměrný stupeň", f"{np.mean(degs):.3f}")
             with col_deg_2:
@@ -2065,7 +2063,7 @@ if analysis_mode == "Časová řada → HVG":
             interp_parts.append(
                 f"CDF ukazuje, jak rychle se kumuluje podíl vrcholů do nižších stupňů; medián stupně je **{median_degree:.3f}**."
             )
-
+            # Pokud je entropie nízká, můžeme dodat interpretaci o dominance určitých stupňů
             st.info(" ".join(interp_parts))
 
             fig_hist = create_degree_histogram_figure(
@@ -2102,10 +2100,10 @@ if analysis_mode == "Časová řada → HVG":
             )
 
             do_powerlaw_global = st.checkbox(
-                "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
+                "Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
                 key="powerlaw_main_global",
             )
-
+            # Pokud uživatel zvolí provedení power-law testu, zkontrolujeme, zda je k dispozici balík `powerlaw` a pokud ano, provedeme test a zobrazíme výsledky včetně CCDF grafu s fitovanou power-law křivkou.
             if do_powerlaw_global:
                 if not HAS_POWERLAW:
                     st.warning(
@@ -2122,6 +2120,7 @@ if analysis_mode == "Časová řada → HVG":
                             st.info(
                                 f"Power-law test se nepodařilo spolehlivě vyhodnotit: {powerlaw_result['reason']}"
                             )
+                    # Pokud je test úspěšný, zobrazíme odhad exponentu α, k_min, likelihood ratio R a p-hodnotu, a interpretujeme výsledky testu. Také zobrazíme CCDF graf s fitovanou power-law křivkou pro vizuální posouzení kvality fitu.        
                     else:
                         alpha_powerlaw = powerlaw_result["alpha"]
                         xmin_powerlaw = powerlaw_result["xmin"]
@@ -2138,7 +2137,7 @@ if analysis_mode == "Časová řada → HVG":
                         st.write(f"- Odhadnuté k_min: **{xmin}**")
                         st.write(f"- Likelihood ratio: **R = {R:.3f}**")
                         st.write(f"- p-hodnota: **p = {p:.3f}**")
-
+                        # Interpretace výsledků testu
                         if p < 0.1:
                             if R > 0:
                                 st.success(
@@ -2150,7 +2149,14 @@ if analysis_mode == "Časová řada → HVG":
                                 )
                         else:
                             st.info("Test je neprůkazný – nelze rozhodnout.")
-
+                        """
+                        Pro vizuální posouzení fitu zobrazíme CCDF graf s fitovanou power-law křivkou.
+                        Pro tento graf použijeme pouze data pro stupně k ≥ k_min
+                        power-law fit je relevantní pouze pro tail rozdělení.
+                        V grafu zobrazíme empirickou CCDF a teoretickou CCDF podle odhadnutého power-law modelu.
+                        Pokud je tail příliš krátký (méně než 2 unikátní hodnoty), 
+                        upozorníme uživatele, že CCDF graf nemusí být informativní.
+                        """
                         degs_for_fit = powerlaw_result["degrees_for_fit"]
                         unique_sorted = np.sort(np.unique(degs_for_fit))
                         ccdf_vals = np.array(
@@ -2197,7 +2203,7 @@ if analysis_mode == "Časová řada → HVG":
                         else:
                             st.info("Tail je příliš krátký pro CCDF graf.")
 
-        # ====== Shrnutí analýzy ======
+        # Shrnutí analýzy 
         if "Shrnutí analýzy" in selected_sections:
             st.subheader("Shrnutí analýzy")
 
@@ -2206,7 +2212,7 @@ if analysis_mode == "Časová řada → HVG":
                 value="Analýza jedné časové řady",
                 key="main_experiment_name",
             )
-
+            # Na základě všech vypočítaných metrik a výsledků provedených testů vytvoříme textové shrnutí, které bude obsahovat technické informace o HVG
             tech, interp, verdict = generate_hvg_summary_text(
                 n_nodes=n_nodes,
                 n_edges=n_edges,
@@ -2368,7 +2374,7 @@ if analysis_mode == "Časová řada → HVG":
 
         st.markdown("---")
 
-        # ====== Arc diagram HVG ======
+        # Arc diagram HVG
         if "Arc Diagram HVG" in selected_sections:
             st.subheader("Arc Diagram HVG")
             fig_arc = create_arc_diagram_figure(
@@ -2379,7 +2385,7 @@ if analysis_mode == "Časová řada → HVG":
             )
             st.plotly_chart(fig_arc, use_container_width=True)
 
-        # ====== Export HVG a metrik ======
+        # Export HVG a metrik
         if "Export HVG a metrik" in selected_sections:
             st.subheader("Export HVG a metrik")
 
@@ -2454,9 +2460,8 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
 
     custom_graph = None
 
-    # =========================
+  
     # Node list
-    # =========================
     if input_mode == "Node list":
         nodes_text = st.sidebar.text_area(
             "Seznam vrcholů (oddělené čárkou, mezerou nebo novým řádkem)",
@@ -2473,9 +2478,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             Gc.add_nodes_from(tokens)
             custom_graph = Gc
 
-    # =========================
     # Edge list
-    # =========================
     elif input_mode == "Edge list":
         edges_text = st.sidebar.text_area(
             "Seznam hran – každá hrana na novém řádku ve formátu `u,v` nebo `u v`",
@@ -2494,9 +2497,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                     Gc.add_edge(u, v)
             custom_graph = Gc
 
-    # =========================
     # Node + Edge list
-    # =========================
     elif input_mode == "Node + Edge list":
         nodes_text = st.sidebar.text_area(
             "Seznam vrcholů (oddělené čárkou, mezerou nebo novým řádkem)",
@@ -2526,10 +2527,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                     Gc.add_edge(u, v)
 
             custom_graph = Gc
-
-    # =========================
     # Edge list CSV
-    # =========================
     elif input_mode == "Edge list (CSV)":
         st.sidebar.write(
             "Očekává se CSV se **dvěma sloupci**: zdroj a cíl hrany (edge list)."
@@ -2571,9 +2569,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             except Exception as e:
                 st.sidebar.error(f"Chyba při načítání CSV: {e}")
 
-    # =========================
     # Node + edge list CSV
-    # =========================
     elif input_mode == "Node + edge list (CSV)":
         st.sidebar.markdown("### 📂 Načtení grafu z CSV")
 
@@ -2645,15 +2641,11 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             except Exception as e:
                 st.sidebar.error(f"Chyba při načítání CSV: {e}")
 
-    # =========================
     # Uložení grafu do session
-    # =========================
     if custom_graph is not None:
         st.session_state.custom_graph = custom_graph
 
-    # =========================
     # Hlavní obsah
-    # =========================
     st.markdown("## Vlastní HVG graf (analýza)")
     selected_sections_custom = []
 
@@ -2684,9 +2676,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         entropy_deg_c = degree_metrics_custom["entropy_deg"]
         entropy_deg_norm_c = degree_metrics_custom["entropy_deg_norm"]
 
-        # =========================
         # Konfigurační graf
-        # =========================
         Gc_conf, conf_metrics_c = compute_configuration_model_metrics(Gc, seed=42)
 
         n_nodes_conf_c = conf_metrics_c["n_nodes"]
@@ -2725,9 +2715,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             key="custom_hvg_sections",
         )
 
-        # =========================
         # Metriky HVG
-        # =========================
         if "Metriky HVG" in selected_sections_custom:
             col_c1, col_c2 = st.columns(2)
 
@@ -2782,9 +2770,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                         "(chybí některá z metrik L, C, L_rand nebo C_rand nebo je výsledek nespolehlivý)*"
                     )
 
-        # =========================
         # Vizualizace vlastního grafu
-        # =========================
         st.subheader("Vizuální zobrazení vlastního grafu")
 
         if n_nodes_c > 0:
@@ -2812,9 +2798,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
         else:
             st.info("Graf neobsahuje žádné vrcholy – zadej alespoň jeden vrchol nebo hranu.")
 
-        # =========================
         # Podgraf HVG
-        # =========================
         if "Podgraf HVG" in selected_sections_custom:
             st.subheader("Podgraf HVG podle vybraných vrcholů")
 
@@ -2893,9 +2877,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 )
                 st.plotly_chart(fig_sub_c, use_container_width=True)
 
-        # =========================
         # Rozdělení stupňů + power-law
-        # =========================
         if "Rozdělení stupňů + power-law" in selected_sections_custom:
             st.subheader("Rozdělení stupňů vlastního HVG grafu")
 
@@ -2948,7 +2930,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             st.plotly_chart(fig_cdf_c, use_container_width=True)
 
             do_powerlaw_custom = st.checkbox(
-                "🔍 Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
+                " Provést formální power-law test (Clauset–Shalizi–Newman) + CCDF",
                 key="powerlaw_custom_global",
             )
 
@@ -3043,9 +3025,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                         else:
                             st.info("Tail rozdělení je příliš krátký na smysluplný CCDF graf.")
 
-        # =========================
         # Konfigurační graf
-        # =========================
         if "Konfigurační graf (null model)" in selected_sections_custom:
             st.subheader("Konfigurační graf (null model)")
 
@@ -3125,9 +3105,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             )
             st.plotly_chart(fig_conf_c, use_container_width=True)
 
-        # =========================
         # Shrnutí analýzy
-        # =========================
         if "Shrnutí analýzy" in selected_sections_custom:
             st.subheader("Shrnutí analýzy")
 
@@ -3221,9 +3199,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
             else:
                 st.info("Pro tento graf zatím nelze vytvořit jednoznačný závěrečný verdikt.")
 
-        # =========================
         # Export HVG a metrik
-        # =========================
         if "Export HVG a metrik" in selected_sections_custom:
             st.subheader("Export HVG a metrik")
 
@@ -3232,7 +3208,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
 
             adj_df_c = nx.to_pandas_adjacency(Gc)
             adj_csv_c = adj_df_c.to_csv().encode("utf-8-sig")
-
+            # Slovník s hlavními metrikami vlastního grafu pro export do CSV
             metrics_dict_c = {
                 "n_nodes": n_nodes_c,
                 "n_edges": n_edges_c,
@@ -3248,12 +3224,15 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 "sigma_conf": sigma_conf_c,
             }
 
+            # Převedení metrik do tabulky a následně do CSV souboru
             metrics_df_c = pd.DataFrame([metrics_dict_c])
             metrics_csv_c = metrics_df_c.to_csv(index=False).encode("utf-8-sig")
 
+            # Rozložení exportních tlačítek do tří sloupců
             col_exp_c1, col_exp_c2, col_exp_c3 = st.columns(3)
 
             with col_exp_c1:
+                # Export grafu ve formátu seznamu hran
                 st.download_button(
                     "Exportovat HVG jako edge list (CSV)",
                     data=edges_csv_c,
@@ -3262,6 +3241,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 )
 
             with col_exp_c2:
+                # Export grafu ve formátu matice sousednosti
                 st.download_button(
                     "Exportovat HVG jako adjacency matrix (CSV)",
                     data=adj_csv_c,
@@ -3270,6 +3250,7 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 )
 
             with col_exp_c3:
+                # Export vypočtených síťových metrik
                 st.download_button(
                     "Exportovat metriky HVG (CSV)",
                     data=metrics_csv_c,
@@ -3278,14 +3259,18 @@ elif analysis_mode == "Vlastní HVG graf (ruční / CSV)":
                 )
 
     else:
+        # Pokud ještě nebyl vlastní graf zadán, zobrazí se pouze informační hláška
         st.info("Nejprve zadej vlastní HVG graf v levém panelu (node/edge list nebo CSV).")
+
 # =====================================================================
 #  REŽIM 3: POROVNÁNÍ DVOU ČASOVÝCH ŘAD / HVG
 # =====================================================================
 
 elif analysis_mode == "Porovnat dvě časové řady":
+    # Hlavní sekce pro porovnání dvou časových řad a jejich HVG grafů
     st.markdown("## Porovnání dvou časových řad a jejich HVG")
 
+    # Série 1 musí být nejdříve vytvořena v základním režimu analýzy
     if st.session_state.data is None:
         st.info(
             "Nejdřív vygeneruj časovou řadu v režimu **„Časová řada → HVG“**. "
@@ -3297,6 +3282,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
         # =============================
         data1 = st.session_state.data
 
+        # Z první časové řady vytvoříme HVG a dopočítáme jeho metriky
         G1 = build_hvg_cached(data1)
         metrics1 = compute_graph_metrics(G1)
 
@@ -3313,6 +3299,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
         sigma1 = metrics1["sigma"]
         analyzer1 = metrics1["analyzer"]
 
+        # Zvlášť si připravíme metriky stupňového rozdělení pro další analýzu
         degree_metrics_1 = compute_degree_distribution_metrics(degs1)
         unique_deg1_main = degree_metrics_1["unique_deg"]
         counts1_main = degree_metrics_1["counts"]
@@ -3320,9 +3307,11 @@ elif analysis_mode == "Porovnat dvě časové řady":
         entropy_deg1 = degree_metrics_1["entropy_deg"]
         entropy_deg_norm1 = degree_metrics_1["entropy_deg_norm"]
 
+        # Výchozí hodnoty pro power-law test série 1
         powerlaw_p_result_1 = None
         powerlaw_R_result_1 = None
 
+        # Výchozí proměnné pro konfigurační model série 1
         G1_conf = None
         conf_metrics1 = None
         n1c = None
@@ -3337,9 +3326,10 @@ elif analysis_mode == "Porovnat dvě časové řady":
         C_rand1c = None
         sigma1c = None
 
-        # =============================
+
         # Bezpečné výchozí hodnoty pro sérii 2
-        # =============================
+        
+        # Tyto proměnné se použijí podle toho, jaký typ vstupu uživatel zvolí
         mode2 = None
         typ2 = None
         chaos_typ2 = None
@@ -3365,6 +3355,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
         # =============================
         # Sidebar – nastavení série 2
         # =============================
+        # V levém panelu se nastavuje druhá porovnávaná časová řada
         st.sidebar.subheader("Nastavení časové řady – Série 2")
 
         mode2 = st.sidebar.radio(
@@ -3373,10 +3364,10 @@ elif analysis_mode == "Porovnat dvě časové řady":
             key="mode_series_2",
         )
 
-        # -----------------------------
+
         # Standardní signály – Série 2
-        # -----------------------------
         if mode2 == "Standardní signály":
+            # Uživatel vybírá typ synteticky generované řady
             typ2 = st.sidebar.selectbox(
                 "Vyber typ časové řady",
                 [
@@ -3389,6 +3380,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
             )
 
             if typ2 == "Náhodná uniformní":
+                # Parametry pro uniformní náhodnou řadu
                 length2 = st.sidebar.slider("Délka řady", 10, 5000, 50, key="len_uni_2")
                 low2 = st.sidebar.number_input(
                     "Minimální hodnota",
@@ -3404,6 +3396,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
 
             elif typ2 == "Náhodná normální":
+                # Parametry pro normální náhodnou řadu
                 length2 = st.sidebar.slider("Délka řady", 10, 5000, 50, key="len_norm_2")
                 mu2 = st.sidebar.number_input(
                     "Střední hodnota μ",
@@ -3417,21 +3410,22 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
 
             elif typ2 == "Sinusovka":
+                # Parametry pro sinusový signál
                 length2 = st.sidebar.slider("Délka řady", 10, 5000, 100, key="len_sin_2")
                 amp2 = st.sidebar.number_input("Amplituda", value=1.0, key="amp_sin_2")
                 freq2 = st.sidebar.number_input("Frekvence", value=1.0, key="freq_sin_2")
 
             elif typ2 == "Ruční vstup":
+                # Ruční zadání hodnot časové řady
                 txt2 = st.sidebar.text_area(
                     "Zadej hodnoty oddělené čárkou",
                     value="2, 4, 6, 8, 10",
                     key="manual_series_2",
                 )
 
-        # -----------------------------
         # Chaotické generátory – Série 2
-        # -----------------------------
         elif mode2 == "Chaotické generátory":
+            # Výběr konkrétního chaotického systému pro generování řady
             chaos_typ2 = st.sidebar.selectbox(
                 "Vyber chaotický systém",
                 [
@@ -3444,6 +3438,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
             )
 
             if chaos_typ2 == "Logistická mapa":
+                # Parametry logistické mapy
                 length2 = st.sidebar.slider(
                     "Délka řady",
                     100,
@@ -3478,6 +3473,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
 
             elif chaos_typ2 == "Henonova mapa":
+                # Parametry Henonovy mapy
                 length2 = st.sidebar.slider(
                     "Délka řady",
                     100,
@@ -3500,6 +3496,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
 
             elif chaos_typ2 == "Lorenzův systém (x-složka)":
+                # Parametry Lorenzova systému
                 length2 = st.sidebar.slider(
                     "Délka řady",
                     200,
@@ -3528,6 +3525,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
 
             elif chaos_typ2 == "1/f šum (pink noise)":
+                # Parametr délky pro pink noise
                 length2 = st.sidebar.slider(
                     "Délka řady",
                     100,
@@ -3537,10 +3535,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     key="len_pink_2",
                 )
 
-        # -----------------------------
         # Nahrát CSV – Série 2
-        # -----------------------------
         elif mode2 == "Nahrát CSV":
+            # Nahrání druhé časové řady z CSV souboru
             file2 = st.sidebar.file_uploader(
                 "Nahraj CSV soubor",
                 type="csv",
@@ -3555,6 +3552,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
 
                 try:
+                    # Načtení CSV do preview tabulky
                     df2_preview = read_csv_cached(
                         file2.getvalue(),
                         has_header=csv2_has_header,
@@ -3567,9 +3565,11 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 if err:
                     st.sidebar.error(err)
                 else:
+                    # Zobrazení náhledu nahraného souboru
                     st.sidebar.caption("Náhled (prvních 5 řádků):")
                     st.sidebar.dataframe(df2_preview.head(), use_container_width=True)
 
+                    # Výběr sloupce s hodnotami časové řady
                     selected_column2 = st.sidebar.selectbox(
                         "Vyber sloupec s hodnotami časové řady",
                         df2_preview.columns.tolist(),
@@ -3578,6 +3578,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                     datetime_options2 = ["Žádný"] + df2_preview.columns.tolist()
 
+                    # Volitelný výběr sloupce s datem a časem
                     csv2_datetime_column = st.sidebar.selectbox(
                         "Sloupec s datem/časem (volitelné)",
                         options=datetime_options2,
@@ -3585,12 +3586,14 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     )
 
                     if csv2_datetime_column != "Žádný":
+                        # Pokud je k dispozici datetime sloupec, lze vybírat podle indexu nebo podle data
                         selection_mode_cmp = st.sidebar.radio(
                             "Jak chceš vybírat rozsah?",
                             ["Podle indexu", "Podle data"],
                             key="csv2_selection_mode",
                         )
 
+                    # Volitelná normalizace řady
                     normalize_csv2 = st.sidebar.checkbox(
                         "Normalizovat (z-score)",
                         value=False,
@@ -3604,6 +3607,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         )
 
                     if csv2_datetime_column != "Žádný":
+                        # Nastavení případné agregace časové řady
                         st.sidebar.markdown("**Agregace časové řady**")
 
                         aggregation_freq_cmp = st.sidebar.selectbox(
@@ -3634,6 +3638,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     preview_err2 = None
 
                     if csv2_datetime_column != "Žádný" and selection_mode_cmp == "Podle data":
+                        # Převod datetime sloupce pro výběr rozsahu podle data a času
                         dt_series2 = pd.to_datetime(
                             df2_preview[csv2_datetime_column],
                             errors="coerce",
@@ -3689,6 +3694,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                     key="csv2_end_minute",
                                 )
 
+                            # Složení vybraného data a času do jednoho datetime intervalu
                             csv2_start_datetime = dt.datetime.combine(
                                 csv2_start_date,
                                 dt.time(start_hour_2, start_minute_2),
@@ -3698,6 +3704,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 dt.time(end_hour_2, end_minute_2),
                             )
 
+                            # Předběžný odhad, kolik bodů po načtení zůstane
                             _, _, preview_meta2, preview_err2 = load_csv_series(
                                 file2,
                                 df_input=df2_preview,
@@ -3722,8 +3729,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 )
                         else:
                             st.sidebar.warning("Ve vybraném datetime sloupci nejsou platná data.")
-
+                    
                     else:
+                        # Pokud se nevybírá podle data, používá se klasický rozsah řádků
                         max_possible_index2 = max(0, len(df2_preview) - 1)
                         default_end_cmp = min(999, max_possible_index2)
 
@@ -3747,6 +3755,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         st.session_state.csv2_start_manual = start_tmp2
                         st.session_state.csv2_end_manual = end_tmp2
 
+                        # Výběr rozsahu řádků pomocí slideru a ručních vstupů
                         csv2_start_index, csv2_end_index = st.sidebar.slider(
                             "Vyber rozsah řádků",
                             min_value=0,
@@ -3781,6 +3790,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         csv2_start_index = st.session_state.csv2_start_manual
                         csv2_end_index = st.session_state.csv2_end_manual
 
+                        # Předběžný odhad velikosti výsledné řady po načtení
                         _, _, preview_meta2, preview_err2 = load_csv_series(
                             file2,
                             df_input=df2_preview,
@@ -3804,9 +3814,11 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 f"Po načtení vznikne přibližně {preview_meta2['n_points']} bodů časové řady."
                             )
 
+        # Tlačítko pro finální načtení nebo vygenerování druhé série
         generate2 = st.sidebar.button("Načíst / generovat sérii 2")
 
         if generate2:
+            # Podle zvoleného režimu vytvoříme časovou řadu série 2
             if mode2 == "Standardní signály":
                 if typ2 == "Náhodná uniformní":
                     data2_candidate = np.random.uniform(low=low2, high=high2, size=length2)
@@ -3857,6 +3869,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     data2_candidate = generate_pink_noise(length2)
 
             elif mode2 == "Nahrát CSV":
+                # V CSV režimu načítáme sérii přes jednotnou funkci load_csv_series
                 if file2 is None:
                     st.sidebar.error("Nejprve nahraj CSV soubor.")
                     data2_candidate = None
@@ -3899,9 +3912,11 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         data2_candidate = None
                         meta2 = None
 
+            # Pokud se řadu nepodařilo připravit, aplikace upozorní na chybu
             if data2_candidate is None:
                 st.sidebar.error("Série 2 zatím není připravená – zkontroluj nastavení.")
             else:
+                # Uložení série 2 a jejích metadat do session_state
                 st.session_state.data2 = data2_candidate.copy()
                 st.session_state.meta2 = meta2
                 st.session_state.show_cmp_horiz1 = False
@@ -3918,6 +3933,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.sidebar.success(f"Načteno {len(data2_candidate)} hodnot pro sérii 2.")
 
+                # Po načtení CSV vypíšeme základní informace o vybraném rozsahu
                 if mode2 == "Nahrát CSV":
                     if meta2 is not None and meta2["datetime_used"]:
                         if meta2["selection_mode"] == "date":
@@ -3939,12 +3955,14 @@ elif analysis_mode == "Porovnat dvě časové řady":
         data2 = st.session_state.data2
         meta2_saved = st.session_state.meta2
 
+        # Dokud není série 2 připravena, zobrazí se pouze instrukce
         if data2 is None:
             st.info(
                 "V levém panelu nastav parametry **Série 2** a klikni na "
                 "**„Načíst / generovat sérii 2“**."
             )
         else:
+            # Po načtení série 2 vytvoříme její HVG a vypočítáme metriky
             G2 = build_hvg_cached(data2)
             metrics2 = compute_graph_metrics(G2)
 
@@ -3961,6 +3979,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
             sigma2 = metrics2["sigma"]
             analyzer2 = metrics2["analyzer"]
 
+            # Metriky stupňového rozdělení pro sérii 2
             degree_metrics_2 = compute_degree_distribution_metrics(degs2)
             unique_deg2_main = degree_metrics_2["unique_deg"]
             counts2_main = degree_metrics_2["counts"]
@@ -3968,6 +3987,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
             entropy_deg2 = degree_metrics_2["entropy_deg"]
             entropy_deg_norm2 = degree_metrics_2["entropy_deg_norm"]
 
+            # Výchozí hodnoty pro power-law test a konfigurační model série 2
             powerlaw_p_result_2 = None
             powerlaw_R_result_2 = None
 
@@ -3988,6 +4008,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
             # =============================
             # Časové řady série 1 a 2
             # =============================
+            # Zde se zobrazují obě časové řady vedle sebe pro přímé vizuální porovnání
             col_series1, col_series2 = st.columns(2)
 
             with col_series1:
@@ -4002,6 +4023,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 fig1 = px.line(df1, x="index", y="value", markers=True, title="Série 1")
                 fig1.update_traces(marker_size=6)
 
+                # Volitelně se do grafu přikreslí vodorovné HVG linky
                 if st.session_state.show_cmp_horiz1:
                     shapes1 = []
                     for i, j in G1.edges():
@@ -4023,6 +4045,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
             with col_series2:
                 st.markdown("### Série 2 – nastavená v levém panelu")
 
+                # Pokud byla série 2 normalizována, vypisují se původní i upravené statistiky
                 if meta2_saved is not None and meta2_saved.get("normalized", False):
                     st.write(
                         f"- Délka: **{len(data2)}**, "
@@ -4044,6 +4067,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 fig2 = px.line(df2, x="index", y="value", markers=True, title="Série 2")
                 fig2.update_traces(marker_size=6)
 
+                # Volitelně se i zde přidají vodorovné HVG linky
                 if st.session_state.show_cmp_horiz2:
                     shapes2 = []
                     for i, j in G2.edges():
@@ -4062,6 +4086,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.plotly_chart(fig2, use_container_width=True)
 
+            # Tlačítka pro zapnutí a vypnutí vodorovných HVG linek
             btn_col1, btn_col2 = st.columns(2)
 
             with btn_col1:
@@ -4074,9 +4099,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     st.session_state.show_cmp_horiz2 = not st.session_state.show_cmp_horiz2
                     st.rerun()
 
-            # =============================
+   
             # Společný výběr sekcí
-            # =============================
+            # Uživatel si vybírá, které části porovnání chce zobrazit
             section_options_cmp = [
                 "Metriky HVG",
                 "Propojení časová řada ↔ HVG",
@@ -4094,9 +4119,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 default=section_options_cmp,
             )
 
-            # =============================
             # HVG grafy vedle sebe
-            # =============================
+            
+            # Zobrazení obou HVG grafů vedle sebe pro přímé vizuální srovnání
             st.markdown("### HVG grafy vedle sebe")
 
             col_g1, col_g2 = st.columns(2)
@@ -4143,10 +4168,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 )
                 st.plotly_chart(fig_g2, use_container_width=True)
 
-            # =============================
             # Metriky HVG
-            # =============================
             if "Metriky HVG" in selected_sections_cmp:
+                # V této části se vedle sebe vypisují základní síťové metriky obou HVG
                 st.markdown("### Porovnání metrik HVG")
 
                 col_m1, col_m2 = st.columns(2)
@@ -4219,16 +4243,16 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         else:
                             st.info(msg2)
 
-            # =============================
             # Propojení časová řada ↔ HVG
-            # =============================
             if "Propojení časová řada ↔ HVG" in selected_sections_cmp:
+                # Tato část ukazuje vztah mezi vybraným bodem časové řady a odpovídajícím vrcholem v HVG
                 st.markdown("### Propojení časové řady a HVG (Série 1 & 2)")
 
                 tab1, tab2 = st.tabs(["Série 1", "Série 2"])
 
                 with tab1:
                     if n1 > 0:
+                        # Uživatel vybírá vrchol, který chce zvýraznit
                         idx1 = st.number_input(
                             "Index pro zvýraznění (Série 1)",
                             min_value=0,
@@ -4244,6 +4268,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             f"sousedé: **{neighbors1}**"
                         )
 
+                        # Zobrazení časové řady se zvýrazněným bodem a jeho sousedy
                         df_ts1 = pd.DataFrame({"index": np.arange(len(data1)), "value": data1})
                         fig_ts1 = px.line(
                             df_ts1,
@@ -4274,6 +4299,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             )
                         st.plotly_chart(fig_ts1, use_container_width=True)
 
+                        # Připravíme layout HVG pro zvýraznění stejného vrcholu v síti
                         pos1_h = compute_graph_layout(G1, layout_type="spring", seed=42)
 
                         edge_x1h, edge_y1h = [], []
@@ -4305,6 +4331,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             hoverinfo="none",
                         )
 
+                        # Zvýrazníme vybraný vrchol a jeho sousedy přímo v HVG
                         hl_nodes1 = [idx1] + neighbors1
                         hl_x1, hl_y1 = [], []
                         for node in hl_nodes1:
@@ -4334,6 +4361,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 with tab2:
                     if n2 > 0:
+                        # Stejný princip zvýraznění pro druhou sérii
                         idx2 = st.number_input(
                             "Index pro zvýraznění (Série 2)",
                             min_value=0,
@@ -4410,6 +4438,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             hoverinfo="none",
                         )
 
+                        # Zvýraznění vybraného vrcholu a jeho sousedů v HVG druhé série
                         hl_nodes2 = [idx2] + neighbors2
                         hl_x2, hl_y2 = [], []
                         for node in hl_nodes2:
@@ -4437,10 +4466,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         )
                         st.plotly_chart(fig_h2, use_container_width=True)
 
-            # =============================
             # Lokální analýza
-            # =============================
             if "Lokální analýza úseku časové řady" in selected_sections_cmp:
+                # Uživatel si vybírá kratší úsek obou sérií a porovnává jeho statistiky i lokální HVG
                 st.markdown("### Lokální analýza úseku časové řady (Série 1 & 2)")
 
                 col_loc1, col_loc2 = st.columns(2)
@@ -4465,6 +4493,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         )
 
                         if len(seg1) > 0:
+                            # Výpočet základních statistik a entropie pro vybraný segment
                             ent1 = shannon_entropy(seg1, bins="auto")
                             st.write(
                                 f"- Průměr (lokální): **{seg1.mean():.3f}**  \n"
@@ -4474,6 +4503,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             )
 
                             if len(seg1) >= 2:
+                                # Z lokálního segmentu vytvoříme lokální HVG a změříme jeho metriky
                                 G1_seg = build_hvg_cached(seg1)
                                 n1s = G1_seg.number_of_nodes()
                                 m1s = G1_seg.number_of_edges()
@@ -4528,6 +4558,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         )
 
                         if len(seg2) > 0:
+                            # Základní statistiky a entropie lokálního úseku druhé série
                             ent2 = shannon_entropy(seg2, bins="auto")
                             st.write(
                                 f"- Průměr (lokální): **{seg2.mean():.3f}**  \n"
@@ -4537,6 +4568,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             )
 
                             if len(seg2) >= 2:
+                                # Lokální HVG a jeho metriky pro druhou sérii
                                 G2_seg = build_hvg_cached(seg2)
                                 n2s = G2_seg.number_of_nodes()
                                 m2s = G2_seg.number_of_edges()
@@ -4571,10 +4603,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                 if diam2s is not None:
                                     st.write(f"- Průměr grafu: **{diam2s}**")
 
-            # =============================
             # Podgraf HVG
-            # =============================
             if "Podgraf HVG" in selected_sections_cmp:
+                # Uživatel zadá vrcholy a aplikace zobrazí odpovídající podgraf v obou sériích
                 st.markdown("### Podgraf HVG pro obě série")
 
                 sub_nodes_text = st.text_input(
@@ -4604,6 +4635,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     if len(valid1) == 0:
                         st.info("Žádný zadaný index nepadá do rozsahu vrcholů Série 1.")
                     else:
+                        # Vytvoření podgrafu série 1 podle zadaných vrcholů
                         G1_sub = G1.subgraph(valid1).copy()
                         st.write(
                             f"- Vrcholy: **{G1_sub.number_of_nodes()}**, hrany: **{G1_sub.number_of_edges()}**"
@@ -4662,6 +4694,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     if len(valid2) == 0:
                         st.info("Žádný zadaný index nepadá do rozsahu vrcholů Série 2.")
                     else:
+                        # Vytvoření podgrafu série 2 podle stejných vrcholů
                         G2_sub = G2.subgraph(valid2).copy()
                         st.write(
                             f"- Vrcholy: **{G2_sub.number_of_nodes()}**, hrany: **{G2_sub.number_of_edges()}**"
@@ -4714,10 +4747,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         )
                         st.plotly_chart(fig2_sub, use_container_width=True)
 
-            # =============================
             # Konfigurační graf (null model)
-            # =============================
             if "Konfigurační graf (null model)" in selected_sections_cmp:
+                # Tato část porovnává oba HVG s jejich konfiguračními grafy
                 st.markdown("### Konfigurační graf (null model) pro obě série")
 
                 if conf_metrics1 is None:
@@ -4773,6 +4805,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     if sigma1c is not None and not np.isnan(sigma1c):
                         st.write(f"- Small-world index σ_conf: **{sigma1c:.2f}**")
 
+                    # Vizualizace konfiguračního grafu pro sérii 1
                     pos1c = compute_graph_layout(G1_conf, layout_type="spring", seed=42)
                     edge_trace1c, node_trace1c = prepare_network_traces(
                         G1_conf,
@@ -4816,6 +4849,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     if sigma2c is not None and not np.isnan(sigma2c):
                         st.write(f"- Small-world index σ_conf: **{sigma2c:.2f}**")
 
+                    # Vizualizace konfiguračního grafu pro sérii 2
                     pos2c = compute_graph_layout(G2_conf, layout_type="spring", seed=42)
                     edge_trace2c, node_trace2c = prepare_network_traces(
                         G2_conf,
@@ -4836,10 +4870,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     )
                     st.plotly_chart(fig_conf2, use_container_width=True)
 
-            # =============================
             # Rozdělení stupňů + power-law
-            # =============================
             if "Rozdělení stupňů + power-law" in selected_sections_cmp:
+                # Porovnání rozdělení stupňů obou HVG včetně power-law testu
                 st.markdown("### Porovnání stupňového rozdělení")
 
                 unique_deg1 = degree_metrics_1["unique_deg"]
@@ -4854,6 +4887,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 entropy_deg2 = degree_metrics_2["entropy_deg"]
                 entropy_deg_norm2 = degree_metrics_2["entropy_deg_norm"]
 
+                # Slovní zařazení normalizované entropie do kategorií
                 entropy_level1, entropy_text1 = classify_entropy_level(entropy_deg_norm1)
                 entropy_level2, entropy_text2 = classify_entropy_level(entropy_deg_norm2)
 
@@ -4889,6 +4923,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.markdown("#### Stručná interpretace porovnání")
 
+                # Sem skládáme slovní porovnání obou stupňových rozdělení
                 comparison_deg_parts = []
 
                 if entropy_deg_norm1 > entropy_deg_norm2:
@@ -4938,6 +4973,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.info(" ".join(comparison_deg_parts))
 
+                # Společný histogram stupňů obou sérií
                 df_deg_cmp = pd.DataFrame(
                     {
                         "degree": degs1 + degs2,
@@ -4965,6 +5001,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.markdown("#### PDF stupňového rozdělení")
 
+                # Samostatné PDF grafy pro obě série
                 col_pdf1, col_pdf2 = st.columns(2)
 
                 with col_pdf1:
@@ -4989,6 +5026,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.markdown("#### CDF stupňového rozdělení")
 
+                # Výpočet kumulativního rozdělení z PDF
                 cdf1 = np.cumsum(pk1)
                 cdf2 = np.cumsum(pk2)
 
@@ -5016,8 +5054,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.markdown("#### Formální power-law test + CCDF")
 
+                # Volitelný formální test power-law pro obě série
                 do_powerlaw_cmp = st.checkbox(
-                    "🔍 Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
+                    "Provést formální power-law test pro obě série (Clauset–Shalizi–Newman) + CCDF",
                     key="cmp_powerlaw_global",
                 )
 
@@ -5035,6 +5074,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             "Přidej ho do `requirements.txt` a nainstaluj pomocí `pip install powerlaw`."
                         )
                     else:
+                        # Fit power-law modelu pro obě série
                         result1 = compute_powerlaw_fit(degs1, has_powerlaw=HAS_POWERLAW)
                         result2 = compute_powerlaw_fit(degs2, has_powerlaw=HAS_POWERLAW)
 
@@ -5074,6 +5114,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                     result_text_1 = "neprůkazné"
                                     st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
 
+                                # Konstrukce empirické a teoretické CCDF křivky
                                 degs1_for_fit = result1["degrees_for_fit"]
                                 unique_sorted1 = np.sort(np.unique(degs1_for_fit))
                                 ccdf_vals1 = np.array(
@@ -5153,6 +5194,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                                     result_text_2 = "neprůkazné"
                                     st.info("Test je neprůkazný. Nelze spolehlivě rozhodnout.")
 
+                                # Konstrukce CCDF i pro druhou sérii
                                 degs2_for_fit = result2["degrees_for_fit"]
                                 unique_sorted2 = np.sort(np.unique(degs2_for_fit))
                                 ccdf_vals2 = np.array(
@@ -5200,6 +5242,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                         st.markdown("#### Porovnání power-law výsledků")
 
+                        # Slovní shrnutí výsledků power-law testu pro obě série
                         compare_powerlaw_parts = []
 
                         if result_text_1 is not None and result_text_2 is not None:
@@ -5227,13 +5270,14 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             )
 
                         st.warning(" ".join(compare_powerlaw_parts))
-
-            # =============================
+           
             # Shrnutí analýzy pro obě série
-            # =============================
             if "Shrnutí analýzy" in selected_sections_cmp:
+                # Zobrazení souhrnné interpretace výsledků pro obě porovnávané série
                 st.markdown("### Shrnutí analýzy")
 
+                # Pokud ještě nebyl vytvořen konfigurační graf pro sérii 1,
+                # dopočítáme jej zde kvůli porovnání s původním HVG
                 if conf_metrics1 is None:
                     G1_conf, conf_metrics1 = compute_configuration_model_metrics(G1, seed=42)
                     n1c = conf_metrics1["n_nodes"]
@@ -5248,6 +5292,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     C_rand1c = conf_metrics1["C_rand"]
                     sigma1c = conf_metrics1["sigma"]
 
+                # Stejné dopočítání konfiguračního grafu pro sérii 2
                 if conf_metrics2 is None:
                     G2_conf, conf_metrics2 = compute_configuration_model_metrics(G2, seed=42)
                     n2c = conf_metrics2["n_nodes"]
@@ -5262,12 +5307,15 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     C_rand2c = conf_metrics2["C_rand"]
                     sigma2c = conf_metrics2["sigma"]
 
+                # Uživatel si může pojmenovat celé porovnání pro přehlednější export
                 experiment_name_cmp = st.text_input(
                     "Název experimentu / porovnání",
                     value="Porovnání série 1 a série 2",
                     key="cmp_experiment_name",
                 )
 
+                # Vytvoření textového shrnutí pro sérii 1
+                # (technický popis, interpretace a závěrečný slovní verdikt)
                 tech1, interp1, verdict1 = generate_hvg_summary_text(
                     n_nodes=n1,
                     n_edges=m1,
@@ -5281,6 +5329,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     series_name=st.session_state.get("series_name", "Série 1"),
                 )
 
+                # Vytvoření textového shrnutí pro sérii 2
                 tech2, interp2, verdict2 = generate_hvg_summary_text(
                     n_nodes=n2,
                     n_edges=m2,
@@ -5294,6 +5343,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     series_name=st.session_state.get("series_name2", "Série 2"),
                 )
 
+                # Orientační klasifikace série 1 na základě více síťových metrik
                 classification1 = classify_series_from_hvg(
                     avg_deg=avg_deg1,
                     C=C1,
@@ -5308,6 +5358,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     sigma_conf=sigma1c,
                 )
 
+                # Orientační klasifikace série 2 stejným postupem
                 classification2 = classify_series_from_hvg(
                     avg_deg=avg_deg2,
                     C=C2,
@@ -5322,11 +5373,14 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     sigma_conf=sigma2c,
                 )
 
+                # Pomocná funkce pro vykreslení shrnutí jedné série
+                # Díky tomu nemusíme stejný kód psát dvakrát
                 def render_series_summary(title, tech, interp, verdict, classification, n_points, n_nodes_local):
                     st.markdown(f"## {title}")
 
                     validation_messages = []
 
+                    # Kontrola, zda je časová řada dostatečně dlouhá pro rozumnou interpretaci
                     if n_points < 10:
                         validation_messages.append(
                             "Časová řada je velmi krátká (méně než 10 bodů), takže výsledky mohou být silně nestabilní."
@@ -5336,22 +5390,27 @@ elif analysis_mode == "Porovnat dvě časové řady":
                             "Časová řada je poměrně krátká (méně než 30 bodů), takže interpretace může být méně spolehlivá."
                         )
 
+                    # Kontrola, zda HVG obsahuje dost vrcholů pro robustnější síťové metriky
                     if n_nodes_local < 10:
                         validation_messages.append(
                             "HVG má velmi málo vrcholů, takže některé síťové metriky a klasifikační závěry mohou být méně robustní."
                         )
 
+                    # Zobrazení případných upozornění k interpretaci
                     if validation_messages:
                         st.markdown("**Upozornění k interpretaci**")
                         for msg in validation_messages:
                             st.warning(msg)
 
+                    # Technický popis výsledného HVG
                     st.markdown("**Technické shrnutí**")
                     st.info(tech)
 
+                    # Slovní interpretace charakteru analyzované řady
                     st.markdown("**Interpretace řady**")
                     st.write(interp)
 
+                    # Hlavní klasifikační výstup pro danou sérii
                     st.markdown("**Orientační klasifikace**")
                     classification_text = (
                         f"**{classification['label']}** "
@@ -5365,11 +5424,14 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     else:
                         st.info(classification_text)
 
+                    # Krátký doplňkový status k síle výsledku
                     st.caption(get_classification_status_text(classification))
 
+                    # Zdůvodnění, proč klasifikace dopadla právě tímto směrem
                     st.markdown("**Zdůvodnění**")
                     st.write(classification["reason_text"])
 
+                    # Dodatečné informace o stabilitě a alternativních interpretacích
                     st.markdown("**Stabilita a charakter výsledku**")
                     st.info(
                         f"{classification['structure_text']} "
@@ -5379,9 +5441,11 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         f"{classification['dominance_text']}"
                     )
 
+                    # Konečný slovní závěr
                     st.markdown("**Závěr**")
                     st.warning(verdict)
 
+                    # Bodové skóre všech tří interpretačních směrů
                     st.markdown("**Skóre jednotlivých interpretací**")
                     c1, c2, c3 = st.columns(3)
 
@@ -5408,6 +5472,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                     st.caption("Hlavní číslo = bodové skóre. Procento = relativní podíl interpretace.")
 
+                    # Grafické zobrazení relativní podpory jednotlivých interpretací
                     st.markdown("**Relativní podpora interpretací**")
 
                     mapping = [
@@ -5421,10 +5486,12 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         st.progress(classification["normalized_scores"][key] / 100)
                         st.caption(f"{classification['normalized_scores'][key]:.1f} %")
 
+                    # Stručné doplňující texty ke stabilitě výsledku
                     st.caption(classification["stability_text"])
                     st.caption(classification["mixed_text"])
                     st.caption(classification["warning_text"])
 
+                # Zobrazení shrnutí obou sérií vedle sebe
                 col_s1, col_s2 = st.columns(2)
 
                 with col_s1:
@@ -5452,6 +5519,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 st.markdown("---")
                 st.markdown("## Porovnání sérií")
 
+                # Sem skládáme slovní porovnání topologických vlastností obou HVG
                 topology_parts = []
 
                 if not np.isnan(C1) and not np.isnan(C2):
@@ -5484,11 +5552,13 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 else:
                     topology_parts.append("Obě série mají podobnou variabilitu stupňového rozdělení.")
 
+                # Zobrazení slovního porovnání topologie obou grafů
                 st.markdown("**Porovnání topologie HVG**")
                 st.info(" ".join(topology_parts))
 
                 st.markdown("**Porovnání výsledné interpretace**")
 
+                # Připravíme si pomocné proměnné pro srovnání klasifikačních výsledků
                 same_label = classification1["label"] == classification2["label"]
                 conf1 = classification1["confidence"]
                 conf2 = classification2["confidence"]
@@ -5499,6 +5569,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 gap1 = classification1["best_score"] - classification1["second_score"]
                 gap2 = classification2["best_score"] - classification2["second_score"]
 
+                # Základní informace, zda obě série vedou ke stejné interpretaci
                 if same_label:
                     st.success(
                         f"Obě časové řady vykazují podobný orientační charakter: "
@@ -5510,6 +5581,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         f"zatímco Série 2 jako **{classification2['label']}**."
                     )
 
+                # Sem skládáme podrobnější slovní porovnání síly a stability klasifikace
                 interpretation_compare_parts = []
 
                 if dom1 > dom2 + 0.08:
@@ -5560,12 +5632,14 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         "Obě dominantní interpretace mají podobně silnou absolutní podporu metrik."
                     )
 
+                # Zobrazení výsledného slovního porovnání interpretace
                 st.info(" ".join(interpretation_compare_parts))
                 st.caption(
                     "Porovnání vychází z topologie HVG, zejména z lokální propojenosti, "
                     "small-world charakteru, variability stupňového rozdělení a relativní dominance výsledné interpretace."
                 )
 
+                # Grafické porovnání relativní podpory tří interpretačních kategorií
                 st.markdown("### Grafické porovnání procentuální podpory interpretací")
 
                 df_class_cmp = pd.DataFrame(
@@ -5613,6 +5687,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 fig_class_cmp.update_layout(yaxis_range=[0, 100])
                 st.plotly_chart(fig_class_cmp, use_container_width=True)
 
+                # Druhý graf ukazuje už ne procenta, ale přímo surová bodová skóre
                 st.markdown("### Grafické porovnání surového skóre")
 
                 scores_compare_df = pd.DataFrame(
@@ -5623,6 +5698,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     }
                 )
 
+                # Převod dat do dlouhého formátu kvůli snadnějšímu vykreslení v Plotly
                 scores_compare_long = scores_compare_df.melt(
                     id_vars="Interpretace",
                     var_name="Série",
@@ -5652,6 +5728,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     "Graf se surovým skóre ukazuje absolutní sílu podpory jednotlivých směrů."
                 )
 
+                # Stručný slovní závěr celého porovnání
                 st.markdown("### Stručný závěr porovnání")
 
                 final_compare_parts = [
@@ -5683,9 +5760,11 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.success(" ".join(final_compare_parts))
 
+                # Pokud uživatel zadal název experimentu, zobrazíme jej i v závěru
                 if experiment_name_cmp.strip():
                     st.caption(f"Název porovnání: {experiment_name_cmp}")
 
+                # Pomocné rozhodnutí, která série působí silněji topologicky a interpretačně
                 same_label_cmp = classification1["label"] == classification2["label"]
 
                 if not np.isnan(C1) and not np.isnan(C2):
@@ -5705,6 +5784,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 else:
                     dominance_winner = "obě série podobně"
 
+                # Přehledový panel s nejdůležitějšími výsledky porovnání
                 report_col1, report_col2, report_col3 = st.columns(3)
 
                 with report_col1:
@@ -5727,6 +5807,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                         dominance_winner,
                     )
 
+                # Závěrečný textový report k porovnání
                 report_text_parts = []
 
                 if same_label_cmp:
@@ -5748,6 +5829,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
 
                 st.info(" ".join(report_text_parts))
 
+                # Příprava tabulky pro export souhrnných výsledků obou sérií
                 st.markdown("### Export souhrnné klasifikace")
 
                 summary_export_df = pd.DataFrame(
@@ -5793,6 +5875,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     ]
                 )
 
+                # Převod tabulky do CSV pro stažení uživatelem
                 summary_export_csv = summary_export_df.to_csv(index=False).encode("utf-8-sig")
 
                 st.download_button(
@@ -5802,10 +5885,9 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     mime="text/csv",
                 )
 
-            # =============================
             # Arc Diagram HVG – obě série
-            # =============================
             if "Arc Diagram HVG" in selected_sections_cmp:
+                # Zobrazení arc diagramů pro obě série vedle sebe
                 st.markdown("### Arc Diagramy HVG – porovnání")
 
                 col_arc1, col_arc2 = st.columns(2)
@@ -5828,12 +5910,12 @@ elif analysis_mode == "Porovnat dvě časové řady":
                     )
                     st.plotly_chart(fig_arc2, use_container_width=True)
 
-            # =============================
             # Export HVG a metrik pro obě série
-            # =============================
             if "Export HVG a metrik" in selected_sections_cmp:
+                # Příprava exportů grafu i metrik pro obě analyzované série
                 st.markdown("### Export HVG a metrik pro obě série")
 
+                # Série 1: edge list, matice sousednosti a tabulka metrik
                 edges_df1 = pd.DataFrame(list(G1.edges()), columns=["source", "target"])
                 edges_csv1 = edges_df1.to_csv(index=False).encode("utf-8-sig")
                 adj_df1 = nx.to_pandas_adjacency(G1)
@@ -5857,6 +5939,7 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 metrics_df1 = pd.DataFrame([metrics_dict1])
                 metrics_csv1 = metrics_df1.to_csv(index=False).encode("utf-8-sig")
 
+                # Série 2: edge list, matice sousednosti a tabulka metrik
                 edges_df2 = pd.DataFrame(list(G2.edges()), columns=["source", "target"])
                 edges_csv2 = edges_df2.to_csv(index=False).encode("utf-8-sig")
                 adj_df2 = nx.to_pandas_adjacency(G2)
@@ -5880,24 +5963,25 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 metrics_df2 = pd.DataFrame([metrics_dict2])
                 metrics_csv2 = metrics_df2.to_csv(index=False).encode("utf-8-sig")
 
+                # Tlačítka pro stažení exportů rozdělíme přehledně do dvou sloupců
                 col_exp1, col_exp2 = st.columns(2)
 
                 with col_exp1:
                     st.markdown("**Série 1 – exporty**")
                     st.download_button(
-                        "⬇️ HVG (edge list, CSV) – série 1",
+                        "HVG (edge list, CSV) – série 1",
                         data=edges_csv1,
                         file_name="hvg_series1_edgelist.csv",
                         mime="text/csv",
                     )
                     st.download_button(
-                        "⬇️ HVG (adjacency matrix, CSV) – série 1",
+                        "HVG (adjacency matrix, CSV) – série 1",
                         data=adj_csv1,
                         file_name="hvg_series1_adjacency.csv",
                         mime="text/csv",
                     )
                     st.download_button(
-                        "⬇️ Metriky HVG – série 1",
+                        "Metriky HVG – série 1",
                         data=metrics_csv1,
                         file_name="hvg_series1_metrics.csv",
                         mime="text/csv",
@@ -5906,19 +5990,19 @@ elif analysis_mode == "Porovnat dvě časové řady":
                 with col_exp2:
                     st.markdown("**Série 2 – exporty**")
                     st.download_button(
-                        "⬇️ HVG (edge list, CSV) – série 2",
+                        "HVG (edge list, CSV) – série 2",
                         data=edges_csv2,
                         file_name="hvg_series2_edgelist.csv",
                         mime="text/csv",
                     )
                     st.download_button(
-                        "⬇️ HVG (adjacency matrix, CSV) – série 2",
+                        "HVG (adjacency matrix, CSV) – série 2",
                         data=adj_csv2,
                         file_name="hvg_series2_adjacency.csv",
                         mime="text/csv",
                     )
                     st.download_button(
-                        "⬇️ Metriky HVG – série 2",
+                        "Metriky HVG – série 2",
                         data=metrics_csv2,
                         file_name="hvg_series2_metrics.csv",
                         mime="text/csv",
