@@ -18,19 +18,23 @@ except ImportError:
 # =========================
 #  HVG – pomocné funkce
 # =========================
-
-
-
-
 @st.cache_data(show_spinner=False)
 def build_hvg_cached_edges(data_tuple):
+    # Data se převedou na numpy pole kvůli jednotnému zpracování.
     data = np.array(data_tuple, dtype=float)
+
+    # Nejprve vytvoří samotný HVG.
     G = build_hvg(data)
+
+    # Do cache ukládáme pouze hrany a počet vrcholů,
     return list(G.edges()), len(data)
 
 
 def build_hvg_cached(data):
+    # Vstup se převede na tuple, pro cache.
     edges, n = build_hvg_cached_edges(tuple(np.asarray(data, dtype=float)))
+
+    # Z uložených hran se znovu sestaví NetworkX graf.
     G = nx.Graph()
     G.add_nodes_from(range(n))
     G.add_edges_from(edges)
@@ -42,15 +46,21 @@ def build_hvg_cached(data):
 
 def shannon_entropy(x, bins="auto"):
     """
-    Jednoduchý odhad Shannonovy entropie z histogramu.
+    odhad Shannonovy entropie z histogramu.
     Používá np.histogram s density=True.
     """
     if len(x) == 0:
         return np.nan
+
+    # Histogram aproximuje rozdělení hodnot v časové řadě.
     hist, _ = np.histogram(x, bins=bins, density=True)
+
+    # Nulové četnosti se vyřadí, aby nevadily v logaritmu.
     hist = hist[hist > 0]
+
     if len(hist) == 0:
         return np.nan
+
     return -np.sum(hist * np.log2(hist))
 
 
@@ -60,24 +70,31 @@ def shannon_entropy(x, bins="auto"):
 
 @st.cache_data(show_spinner=False)
 def compute_graph_metrics_cached(edges_tuple, n_nodes):
+    # Graf se znovu složí z hran a počtu vrcholů,
+    # aby bylo možné výpočet metrik efektivně cacheovat.
     G = nx.Graph()
     G.add_nodes_from(range(n_nodes))
     G.add_edges_from(edges_tuple)
 
     n_edges = G.number_of_edges()
 
+    # Stupně všech vrcholů tvoří základ pro další metriky.
     degrees = [d for _, d in G.degree()]
     avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
 
+    # Clustering (lokální propojenosti sítě).
     try:
         C = nx.average_clustering(G)
     except Exception:
         C = float("nan")
 
+    # Některé metriky mají smysl jen pro souvislý graf.
     is_conn = nx.is_connected(G) if n_nodes > 0 else False
 
     L = None
     diam = None
+
+    # když je graf souvislý a má alespoň dva vrcholy. -> vypočet diametru a average path lenght
     if is_conn and n_nodes > 1:
         try:
             L = nx.average_shortest_path_length(G)
@@ -88,6 +105,7 @@ def compute_graph_metrics_cached(edges_tuple, n_nodes):
         except Exception:
             diam = None
 
+    # Assortativita ukazuje, zda se propojují vrcholy podobného stupně.
     try:
         assort = nx.degree_assortativity_coefficient(G)
     except Exception:
@@ -95,6 +113,8 @@ def compute_graph_metrics_cached(edges_tuple, n_nodes):
 
     L_rand = None
     C_rand = None
+
+    # Přibližné metriky odpovídajícího náhodného grafu slouží jako reference pro small-world analýzu.
     if n_nodes > 1 and avg_deg > 1:
         try:
             L_rand = np.log(n_nodes) / np.log(avg_deg)
@@ -123,11 +143,14 @@ def compute_graph_metrics_cached(edges_tuple, n_nodes):
 
 
 def compute_graph_metrics(G):
+    # Hrany se převedou do stabilní, seřazené podoby -> konzistejnější cache.
     edges_tuple = tuple(sorted(tuple(sorted(edge)) for edge in G.edges()))
     n_nodes = G.number_of_nodes()
 
     metrics = compute_graph_metrics_cached(edges_tuple, n_nodes)
     metrics = dict(metrics)
+
+    # K metrikám se doplní i objekt pro slovní interpretaci small-world indexu.
     metrics["analyzer"] = SmallWorldAnalyzer(
         metrics["C"],
         metrics["L"],
@@ -136,13 +159,19 @@ def compute_graph_metrics(G):
     )
     return metrics
 
+
 def compute_configuration_model_metrics(G, seed=42):
+    # Konfigurační graf zachovává stupňovou posloupnost jinak náhodný strukturou
     G_conf = build_configuration_graph_from_hvg(G, seed=seed)
+
+    # Nad tímto null modelem se spočítají stejné metriky jako nad HVG.
     metrics = compute_graph_metrics(G_conf)
     return G_conf, metrics
 
+
 @st.cache_data(show_spinner=False)
 def compute_graph_layout_cached(edges_tuple, n_nodes, layout_type="spring", seed=42):
+    # I rozložení vrcholů se rekonstruuje z hran, kvuli uložení v cache
     G = nx.Graph()
     G.add_nodes_from(range(n_nodes))
     G.add_edges_from(edges_tuple)
@@ -156,6 +185,7 @@ def compute_graph_layout_cached(edges_tuple, n_nodes, layout_type="spring", seed
         except Exception:
             pass
 
+    # Pokud planární rozložení není možné, použije se spring layout.
     pos = nx.spring_layout(G, seed=seed)
     return {node: (float(x), float(y)) for node, (x, y) in pos.items()}
 
@@ -163,7 +193,14 @@ def compute_graph_layout_cached(edges_tuple, n_nodes, layout_type="spring", seed
 def compute_graph_layout(G, layout_type="spring", seed=42):
     edges_tuple = tuple(sorted(tuple(sorted(edge)) for edge in G.edges()))
     n_nodes = G.number_of_nodes()
-    pos_dict = compute_graph_layout_cached(edges_tuple, n_nodes, layout_type=layout_type, seed=seed)
+
+    pos_dict = compute_graph_layout_cached(
+        edges_tuple,
+        n_nodes,
+        layout_type=layout_type,
+        seed=seed,
+    )
+
     return {node: np.array(coords) for node, coords in pos_dict.items()}
 
 
@@ -183,6 +220,7 @@ class SmallWorldAnalyzer:
         self.sigma = self._compute_sigma()
 
     def _compute_sigma(self):
+        # Pokud některá z potřebných metrik chybí, nejde zpočítat Small-W
         if (
             self.C is None or self.L is None or
             self.C_rand in (None, 0) or
@@ -197,10 +235,7 @@ class SmallWorldAnalyzer:
     def interpretation(self, atol=0.05):
         """
         Vrátí dvojici (typ, zpráva) podle hodnoty σ:
-        - typ: 'success'  -> small-world
-               'info'     -> podobné náhodnému grafu (σ ≈ 1)
-               'warning'  -> není small-world
-        - zpráva: lidská interpretace
+        - typ: 'success'  -> small-world| 'info'     -> podobné náhodnému grafu (σ ≈ 1)| 'warning'  -> není small-world
         """
         if self.sigma is None or np.isnan(self.sigma):
             return (
@@ -210,6 +245,8 @@ class SmallWorldAnalyzer:
             )
 
         s = self.sigma
+
+        # σ > 1 znamená výraznější small-world charakter než u náhodného grafu.
         if s > 1 + atol:
             return (
                 "success",
@@ -234,8 +271,6 @@ class SmallWorldAnalyzer:
 #  Volitelný wrapper na power-law fit
 # =========================
 
-
-
 def prepare_network_traces(
     G,
     pos=None,
@@ -249,7 +284,7 @@ def prepare_network_traces(
     import networkx as nx
     import plotly.graph_objects as go
 
-    # Prázdný graf
+    # Ošetření prázdného grafu, aby vizualizace nespadla.
     if G is None or G.number_of_nodes() == 0:
         edge_trace = go.Scatter(
             x=[],
@@ -267,19 +302,20 @@ def prepare_network_traces(
         )
         return edge_trace, node_trace
 
-    # Pokud pozice nejsou dodané, vytvoř je
+    # Pokud pozice nejsou dodané, vytvoří se automaticky.
     if pos is None:
         pos = nx.spring_layout(G, seed=42)
 
-    # Pokud některý uzel v pos chybí, přepočítej layout pro celý graf
+    # Pokud v dodaném layoutu některé vrcholy chybí, přepočtení layoutupro graf
     missing_nodes = [node for node in G.nodes() if node not in pos]
     if missing_nodes:
         pos = nx.spring_layout(G, seed=42)
 
-    # Hrany
     edge_x = []
     edge_y = []
 
+    # Hrany jsou v Plotly reprezentovány jako jedna dlouhá sekvence bodů
+    # oddělená hodnotou None.
     for u, v in G.edges():
         if u not in pos or v not in pos:
             continue
@@ -298,7 +334,6 @@ def prepare_network_traces(
         hoverinfo="none",
     )
 
-    # Uzly
     node_x = []
     node_y = []
     node_hover = []
@@ -314,6 +349,7 @@ def prepare_network_traces(
         node_x.append(x)
         node_y.append(y)
 
+        # Pokud jsou dodané vlastní hover texty, použijí se.
         if hover_texts is not None and i < len(hover_texts):
             node_hover.append(hover_texts[i])
         else:
@@ -341,6 +377,7 @@ def prepare_network_traces(
 
     return edge_trace, node_trace
 
+
 @st.cache_data(show_spinner=False)
 def compute_degree_distribution_metrics_cached(degrees_tuple):
     degrees = list(degrees_tuple)
@@ -365,8 +402,10 @@ def compute_degree_distribution_metrics_cached(degrees_tuple):
     unique_deg, counts = np.unique(degrees, return_counts=True)
     pk = counts / counts.sum()
 
+    # Entropie popisuje rozptýlenost stupňového rozdělení.
     entropy_deg = -np.sum(pk * np.log(pk)) if len(pk) > 0 else 0.0
 
+    # Normalizovaná entropie umožňuje srovnání mezi různými grafy.
     if len(unique_deg) > 1:
         entropy_deg_norm = entropy_deg / np.log(len(unique_deg))
     else:
@@ -394,6 +433,7 @@ def compute_degree_distribution_metrics_cached(degrees_tuple):
 
 def compute_degree_distribution_metrics(degrees):
     return compute_degree_distribution_metrics_cached(tuple(degrees))
+
 
 def classify_entropy_level(entropy_deg_norm):
     if entropy_deg_norm < 0.2:
@@ -426,6 +466,7 @@ def classify_entropy_level(entropy_deg_norm):
             "Vrcholy mají velmi různorodé stupně a rozdělení je silně rozptýlené. "
             "Síť vykazuje vysokou variabilitu a vysokou míru strukturální různorodosti."
         )
+
 
 def create_degree_histogram_figure(degrees, title="Histogram stupňů"):
     df_deg = pd.DataFrame({"degree": degrees})
@@ -490,6 +531,8 @@ def create_arc_diagram_figure(G, values, title="Arc Diagram HVG", node_color="sk
 
     fig = go.Figure()
 
+    # Každá hrana ARC diagramu je zobrazena jako půlkružnice nad osou indexů,
+    # usnadňuje čtení dlouhodosahových vazeb v HVG.
     for i, j in G.edges():
         r = (j - i) / 2
         mid = i + r
@@ -532,6 +575,7 @@ def create_arc_diagram_figure(G, values, title="Arc Diagram HVG", node_color="sk
 
     return fig
 
+
 def compute_powerlaw_fit(degrees, has_powerlaw=True):
     """
     Provede power-law fit nad stupni grafu.
@@ -551,6 +595,7 @@ def compute_powerlaw_fit(degrees, has_powerlaw=True):
         result["reason"] = "Balík powerlaw není dostupný."
         return result
 
+    # Pro fit dávají smysl pouze kladné stupně.
     degs_for_fit = np.array([d for d in degrees if d > 0])
     result["degrees_for_fit"] = degs_for_fit
 
@@ -567,6 +612,7 @@ def compute_powerlaw_fit(degrees, has_powerlaw=True):
             verbose=False,
         )
 
+        # Fit vrací exponent alpha, spodní hranici xmin a porovnání s exponenciálním rozdělením.
         alpha = fit.power_law.alpha
         xmin = fit.power_law.xmin
         R, p = fit.distribution_compare("power_law", "exponential")
